@@ -1,51 +1,26 @@
 #include "stdafx.hpp"
 
+#include "cli_options.hpp"
+#include "embedding_utils.hpp"
 #include "exe_path_utils.hpp"
 #include "lua_context.hpp"
 #include "sqlite3raii.hpp"
 #include <memory>
 #include <openai/openai.hpp>
 #include <print>
+#include <ranges>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
+
 /*
-static std::vector<float> embed_text(const std::string &text) {
-    auto res = openai::embedding().create(
-        {{"model", "qwen3-embedding:8b"}, {"input", text}});
-
-    const auto &emb = res["data"][0]["embedding"];
-
-    std::vector<float> out;
-    out.reserve(emb.size());
-    for (const auto &x : emb) {
-        out.push_back(x.get<float>());
-    }
-    return out;
-}
-
-static std::string to_json_array(const std::vector<float> &v) {
-    std::string s;
-    s.reserve(v.size() * 12);
-    s.push_back('[');
-
-    for (std::size_t i = 0; i < v.size(); ++i) {
-        if (i != 0) {
-            s.push_back(',');
-        }
-        s += std::to_string(v[i]);
-    }
-
-    s.push_back(']');
-    return s;
-}
-
 static int dry_run() {
     LuaContext engine;
 
     // Simulando o que o Qwen/Claude enviaria dentro da tag <code>
-    std::string mock_llm_code = R"(
+    std::string mock_llm_code = R"lua(
         local files = fs.ls(".")
         print("Arquivos encontrados: " .. #files)
 
@@ -57,7 +32,7 @@ static int dry_run() {
         end
 
         return "Script finalizado."
-    )";
+    )lua";
 
     auto res = engine.execute(mock_llm_code);
 
@@ -70,12 +45,25 @@ static int dry_run() {
     return 0;
 }
 
+static nlohmann::json::array_t
+docs_from_id_vec(const std::span<const std::pair<int, std::string>> vec) {
+    nlohmann::json::array_t arr;
+    arr.reserve(vec.size());
+    for (const auto &[id, content] : vec) {
+        arr.push_back(content);
+    }
+    return arr;
+}
+
 static void test_sqlitevec_embd() {
-    openai::start("ollama", "", true, "http://localhost:11434/v1/");
+    auto &llmConnection =
+        openai::start("ollama", "", true, "http://localhost:11434/v1/");
 
     sqlite3_db_ptr db;
     check_sqlite_rc(db, sqlite3_open(":memory:", std::out_ptr(db)),
                     "sqlite3_open");
+
+    std::string embedding_model = "qwen3-embedding:8b";
 
     try {
         check_sqlite_rc(db, sqlite3_enable_load_extension(db.get(), 1),
@@ -138,16 +126,19 @@ static void test_sqlitevec_embd() {
             )sql",
                                             "prepare search");
 
-        for (const auto &[id, text] : docs) {
+        auto embeds = embedding_utils::embed_texts(
+            llmConnection, embedding_model, docs_from_id_vec(docs));
+
+        for (const auto &[doc, emb] : std::ranges::zip_view(docs, embeds)) {
+            auto &[id, text] = doc;
             std::println("Embedding doc id={} text={}", id, text);
 
-            const auto emb = embed_text(text);
             if (emb.size() != 4096) {
                 throw std::runtime_error(
                     "unexpected embedding dimension; expected 4096");
             }
 
-            const auto emb_json = to_json_array(emb);
+            const auto emb_json = embedding_utils::to_json_array(emb);
 
             check_sqlite_rc(db, sqlite3_bind_int(insert_doc_stmt.get(), 1, id),
                             "bind doc id");
@@ -182,13 +173,14 @@ static void test_sqlitevec_embd() {
             "How to integrate Lua into a modern C++ project?";
         std::println("\nQuery: {}", query);
 
-        const auto query_emb = embed_text(query);
+        const auto query_emb =
+            embedding_utils::embed_text(llmConnection, embedding_model, query);
         if (query_emb.size() != 4096) {
             throw std::runtime_error(
                 "unexpected query embedding dimension; expected 4096");
         }
 
-        const auto query_json = to_json_array(query_emb);
+        const auto query_json = embedding_utils::to_json_array(query_emb);
 
         check_sqlite_rc(db,
                         sqlite3_bind_text(search_stmt.get(), 1,
@@ -221,8 +213,8 @@ static void test_sqlitevec_embd() {
 int main() {
     dry_run();
     test_sqlitevec_embd();
-}
- */
+}*/
+
 #include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
@@ -231,7 +223,36 @@ int main() {
 
 using namespace ftxui;
 
-int main() {
+int main(int argc, char **argv) {
+    auto parser = app::create_parser();
+    auto result = parser.parse(argc, argv);
+
+    switch (result.status) {
+    case cli::ParseStatus::ShowHelp:
+        std::cout << parser.generate_help(argv[0]);
+        return 0;
+
+    case cli::ParseStatus::ShowHelpVerbose:
+        std::cout << parser.generate_help_verbose(argv[0]);
+        return 0;
+
+    case cli::ParseStatus::ShowVersion:
+        std::print("CPP-LLM-CODER v0.1.0-alpha\n");
+        return 0;
+
+    case cli::ParseStatus::ShowCompletion:
+        // Completion já foi tratada internamente, apenas sai
+        return 0;
+
+    case cli::ParseStatus::Error:
+        std::cerr << "Erro: " << result.error_message << "\n";
+        std::cerr << "Use --help para ver as opções disponíveis.\n";
+        return 1;
+
+    case cli::ParseStatus::Ok:
+        break;
+    }
+
     std::vector<std::string> logs = {"SISTEMA: Motor C++23 inicializado.",
                                      "LUA: VM carregada com sucesso.",
                                      "DB: Conectado a .cppllmcoder/brain.db"};

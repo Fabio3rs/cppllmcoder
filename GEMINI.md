@@ -17,6 +17,7 @@
 3.  **Recursive Task Decomposition (RLM):** Complex tasks spawn focused sub-agents in isolated Lua VMs.
 4.  **Persistent Brain:** `brain.db` (located in `.cppllmcoder/`) ensures state continuity across sessions and crashes.
 5.  **Programmable Tool-Calling:** The model emits Lua code within `<code>` tags instead of verbose JSON.
+6.  **Time-Stamped Observability:** All core tables keep millisecond `created_at`/`updated_at` via SQLite defaults and triggers; `execution_logs` add `duration_ms`, and the TUI prefixes logs with `[HH:MM:SS.mmm]` to highlight latency hotspots.
 
 ---
 
@@ -80,7 +81,9 @@
 - `pointers`: Compressed micro-summaries and file references.
 - `vector_index`: Virtual table for embeddings (`sqlite-vec`).
 - `knowledge_graph`: Relations between pointers (e.g., `CALLS_FUNCTION`).
-- `execution_logs`: Audit trail of Lua snippets and outputs.
+- `execution_logs`: Audit trail of Lua snippets and outputs, including `duration_ms` and automatic millisecond `timestamp`.
+
+All core tables carry `created_at` / `updated_at` with millisecond precision via `DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW'))` plus `AFTER UPDATE` triggers, so the C++ runtime does not have to manage timestamps manually.
 
 ---
 

@@ -110,8 +110,8 @@ CREATE TABLE tasks (
     parent_task_id TEXT,
     description TEXT,
     status TEXT,                  -- pending, running, completed, failed
-    created_at DATETIME,
-    updated_at DATETIME,
+    created_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')),
+    updated_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')),
     FOREIGN KEY (parent_task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 
@@ -123,7 +123,8 @@ CREATE TABLE pointers (
     offset_start INTEGER,         -- byte offset in binary file
     offset_end INTEGER,
     micro_summary TEXT NOT NULL,  -- the text injected into prompts
-    created_at DATETIME,
+    created_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')),
+    updated_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')),
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
 );
 
@@ -152,15 +153,34 @@ CREATE TABLE execution_logs (
     stdout_output TEXT,
     stderr_hints TEXT,
     tokens_used INTEGER,
-    timestamp DATETIME,
+    duration_ms INTEGER DEFAULT 0,
+    timestamp DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')),
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
+
+-- triggers keep updated_at fresh without C++ bookkeeping
+CREATE TRIGGER IF NOT EXISTS trg_tasks_updated
+AFTER UPDATE ON tasks
+BEGIN
+    UPDATE tasks SET updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW') WHERE id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_pointers_updated
+AFTER UPDATE ON pointers
+BEGIN
+    UPDATE pointers SET updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW') WHERE id = old.id;
+END;
 ```
 
 **Key Points:**
 - `pointers` store the compressed knowledge. The `micro_summary` is what the model sees in the prompt (e.g., “P_42: function at 0x4F00 initialises K‑Line”).
 - The engine injects these summaries into the system prompt at the beginning of each turn.
 - When the model references a pointer (e.g., “look at P_42”), the engine can optionally expand it by retrieving the full context (file contents) and injecting it into the conversation. This mimics the “dereferencing” pattern.
+- All core tables timestamp themselves with millisecond precision (`STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')`) and `AFTER UPDATE` triggers keep `updated_at` correct. `execution_logs` also records `duration_ms`, turning the DB into a latency profiler for Lua/tool calls.
+
+**Timestamps no front-end e nas ferramentas**
+- A TUI (FTXUI) deve exibir logs com prefixos `[HH:MM:SS.mmm]` para facilitar a leitura de sequências de eventos e loops de subagentes.
+- Respostas de ferramentas expostas ao Lua podem retornar um envelope JSON com `status`, `data`, `elapsed_ms` e `timestamp`, alinhando o que o LLM vê com o que fica registrado em `execution_logs`.
 
 ### 3.4 Recursive Sub‑Agents (RLM)
 

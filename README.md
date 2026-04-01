@@ -76,6 +76,7 @@ SQLite acts as the project brain and stores:
 * vector embeddings
 * knowledge graph relations
 * execution logs
+* high-precision timestamps for every row
 
 This allows the agent to survive crashes, resume unfinished work, and maintain mission continuity across sessions.
 
@@ -126,6 +127,7 @@ Planned responsibilities:
 * robust error handling with `std::expected`
 * coroutine-based streaming and task coordination
 * resumable execution after crash or interruption
+* unified instrumentation: every DB row gets millisecond `created_at`/`updated_at`, `execution_logs` capture `duration_ms`, and the TUI prints log lines prefixed with `[HH:MM:SS.mmm]` for fast debugging of agent loops
 
 Important implementation ideas:
 
@@ -157,6 +159,7 @@ Why Lua:
 * excellent C++ interoperability through Sol3
 * much lower ceremony than schemas with deeply nested JSON
 
+Each exposed tool returns a compact JSON envelope (`status`, `data`, `elapsed_ms`, `timestamp`) so the LLM sees the same timing metadata that lands in `execution_logs`.
 The intended model is not "function calling" in the usual API sense, but **programmable interaction with a controlled runtime**.
 
 ## 3. Persistent Brain
@@ -318,6 +321,8 @@ Relations such as:
 
 A trace of what code the model emitted and what the runtime observed.
 
+All core tables carry `created_at` / `updated_at` columns with `DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW'))` and `AFTER UPDATE` triggers to keep `updated_at` correct without C++ bookkeeping. `execution_logs` also records `duration_ms` per Lua/tool invocation so slow prompts or vector lookups are immediately visible in the DB.
+
 ## Proposed Early Milestones
 
 ### Milestone 1 — brain.db bootstrap
@@ -329,7 +334,7 @@ Deliverables:
 * schema migration bootstrap
 * task creation and recovery
 * pointer insertion and lookup
-* execution log recording
+* execution log recording with automatic timestamps and `duration_ms` for each tool/Lua run
 
 ### Milestone 2 — C++ + Lua Hello World
 

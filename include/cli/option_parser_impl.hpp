@@ -94,7 +94,7 @@ OptionParser<Config>::validate_value(const OptionSpec<Config> *spec,
             }
             allowed += v;
         }
-        return make_unexpected(
+        return std::unexpected<std::string>(
             std::format("Invalid value '{}' for '--{}'. Allowed: {}", value,
                         spec->long_name, allowed));
     }

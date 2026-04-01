@@ -43,8 +43,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     parent_task_id TEXT,               -- Para a recursão do RLM (NULL = Raiz)
     description TEXT NOT NULL,         -- O objetivo ("Analisar checksum")
     status TEXT DEFAULT 'pending',     -- 'pending', 'running', 'completed', 'failed'
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')),
+    updated_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')),
     FOREIGN KEY (parent_task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
 
@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS pointers (
     offset_start INTEGER,              -- Suporte a binários (hex) ou linhas de texto
     offset_end INTEGER,
     micro_summary TEXT NOT NULL,       -- O texto curto que vai para o prompt comprimido
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    created_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')),
+    updated_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')),
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE SET NULL
 );
 
@@ -94,9 +95,23 @@ CREATE TABLE IF NOT EXISTS execution_logs (
     stdout_output TEXT,                -- O que a VM Lua devolveu
     stderr_hints TEXT,                 -- Side-channels (erros ou XML hints)
     tokens_used INTEGER DEFAULT 0,     -- Track de custo do Ollama
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    duration_ms INTEGER DEFAULT 0,     -- Latência da ferramenta / script
+    timestamp DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')),
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
 );
+
+-- Gatilhos para atualizar updated_at automaticamente (evita boilerplate em C++)
+CREATE TRIGGER IF NOT EXISTS trg_tasks_updated
+AFTER UPDATE ON tasks
+BEGIN
+    UPDATE tasks SET updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW') WHERE id = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_pointers_updated
+AFTER UPDATE ON pointers
+BEGIN
+    UPDATE pointers SET updated_at = STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW') WHERE id = old.id;
+END;
 ```
 
 ### Como essas tabelas interagem na prática?
@@ -112,7 +127,12 @@ CREATE TABLE IF NOT EXISTS execution_logs (
 3. **O Grafo de Engenharia Reversa:**
    A tabela `knowledge_graph` é onde a mágica de entender um firmware acontece. O modelo pode emitir: `db.link("P_10", "P_42", "CALLS_FUNCTION")`. Na próxima vez que ele olhar para `P_10` no prompt comprimido, o C++ injetará a dica: *"Nota: P_10 chama a função definida em P_42"*.
 
+4. **Auditabilidade e Debug com Timestamps:**
+   Todas as tabelas têm `created_at`/`updated_at` com precisão de milissegundos via `STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')` e triggers `AFTER UPDATE` para manter `updated_at` sem precisar de código C++. A tabela `execution_logs` ainda traz `duration_ms`, permitindo identificar rapidamente quais prompts, buscas vetoriais ou scripts Lua mais consomem tempo.
+
+### Timestamps na TUI e no Retorno das Ferramentas
+- A FTXUI deve prefixar cada linha de log com `get_now_timestamp()` (`std::format(\"{:%H:%M:%OS}\", now)`) para que o usuário veja latência e ordem dos eventos ao vivo.
+- Toda chamada de ferramenta/Lua pode retornar um envelope JSON contendo `status`, `data`, `elapsed_ms` e `timestamp`, espelhando o que é salvo no `execution_logs`.
+
 ### O que acha?
 Com este Schema, o banco de dados deixa de ser um "log burro" e vira uma **Memória Ativa**. O C++ só precisa atuar como o porteiro, traduzindo as chamadas da VM Lua em comandos `INSERT` e `SELECT` no SQLite.
-
-

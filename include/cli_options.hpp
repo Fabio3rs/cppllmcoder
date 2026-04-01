@@ -1,139 +1,128 @@
 #pragma once
-// =============================================================================
-// CLI Options - Definição das opções de linha de comando
-// =============================================================================
 
 #include <array>
 #include <string>
-
-// Forward include do option_parser (está em include/)
+#include <string_view>
+#include <span>
 #include "cli/option_parser_decls.hpp"
 #include "cli/option_parser_impl.hpp"
 
 namespace app {
 
-// =============================================================================
-// Configuração parseada da linha de comando
-// =============================================================================
-
 struct Options {
-    bool dev_mode = false;  // Forçar modo desenvolvimento
-    bool prod_mode = false; // Forçar modo produção
-    bool verbose = false;   // Log verbose
-    bool version = false;   // Mostrar versão
-    int width = 0;          // Largura da janela (0 = usar padrão)
-    int height = 0;         // Altura da janela (0 = usar padrão)
-    std::string url;        // URL customizada para navegação
+    bool verbose = false;
+    bool version = false;
+    bool auto_approve = false;
+    int max_iterations = 10;
+    std::string db_path = ".cppllmcoder/brain.db";
+    std::string workdir = ".";
+    std::string model = "qwen2.5-coder:7b";
+    std::string endpoint = "http://localhost:11434/v1/";
 };
 
-// =============================================================================
-// Especificações das opções
-// =============================================================================
+// Valores permitidos para demonstração de restrição (exemplo: modelos homologados)
+inline constexpr std::array<std::string_view, 3> ALLOWED_MODELS = {
+    "qwen2.5-coder:7b", 
+    "qwen2.5-coder:14b", 
+    "codestral:latest"
+};
 
-inline constexpr std::array<cli::OptionSpec<Options>, 7> OPTION_SPECS = {{
-    {
-        .long_name = "dev",
-        .short_name = 'd',
-        .takes_value = false,
-        .value_name = "",
-        .help = "Force development mode (use Vite dev server)",
-        .long_help = "Forces the application to run in development mode,\n"
-                     "connecting to the Vite dev server for hot reload.",
-        .allowed_values = {},
-        .apply = [](Options &cfg, std::string_view) { cfg.dev_mode = true; },
-        .required = false,
-    },
-    {
-        .long_name = "prod",
-        .short_name = 'p',
-        .takes_value = false,
-        .value_name = "",
-        .help = "Force production mode (use embedded HTML)",
-        .long_help = "Forces the application to run in production mode,\n"
-                     "using the embedded HTML instead of dev server.",
-        .allowed_values = {},
-        .apply = [](Options &cfg, std::string_view) { cfg.prod_mode = true; },
-        .required = false,
-    },
+inline constexpr std::array<cli::OptionSpec<Options>, 8> OPTION_SPECS = {{
     {
         .long_name = "verbose",
         .short_name = 'v',
         .takes_value = false,
         .value_name = "",
-        .help = "Enable verbose logging",
-        .long_help = "Enables detailed logging output for debugging.",
-        .allowed_values = {},
+        .help = "Habilita logs detalhados.",
+        .long_help = "Exibe logs detalhados de execução da VM Lua, queries SQL e chamadas de API do LLM.",
+        .allowed_values = {}, // Span vazio = qualquer valor
         .apply = [](Options &cfg, std::string_view) { cfg.verbose = true; },
-        .required = false,
+        .required = false
+    },
+    {
+        .long_name = "db",
+        .short_name = 'd',
+        .takes_value = true,
+        .value_name = "<path>",
+        .help = "Caminho do banco SQLite.",
+        .long_help = "Define onde o 'cérebro' do agente (memória de longo prazo e vetores) será armazenado.",
+        .allowed_values = {},
+        .apply = [](Options &cfg, std::string_view val) { cfg.db_path = std::string(val); },
+        .required = false
+    },
+    {
+        .long_name = "workdir",
+        .short_name = 'w',
+        .takes_value = true,
+        .value_name = "<dir>",
+        .help = "Diretório de análise.",
+        .long_help = "O diretório raiz onde o agente terá permissão para ler e listar arquivos via FS tools.",
+        .allowed_values = {},
+        .apply = [](Options &cfg, std::string_view val) { cfg.workdir = std::string(val); },
+        .required = false
+    },
+    {
+        .long_name = "model",
+        .short_name = 'm',
+        .takes_value = true,
+        .value_name = "<name>",
+        .help = "Nome do modelo LLM.",
+        .long_help = "Especifica qual modelo do Ollama deve ser utilizado para geração de código Lua.",
+        .allowed_values = ALLOWED_MODELS, // Restringe aos modelos na array acima
+        .apply = [](Options &cfg, std::string_view val) { cfg.model = std::string(val); },
+        .required = false
+    },
+    {
+        .long_name = "endpoint",
+        .short_name = 'e',
+        .takes_value = true,
+        .value_name = "<url>",
+        .help = "URL da API do Ollama.",
+        .long_help = "Endpoint HTTP compatível com OpenAI (default: local Ollama em 11434).",
+        .allowed_values = {},
+        .apply = [](Options &cfg, std::string_view val) { cfg.endpoint = std::string(val); },
+        .required = false
+    },
+    {
+        .long_name = "max-steps",
+        .short_name = 's',
+        .takes_value = true,
+        .value_name = "<n>",
+        .help = "Limite de iterações.",
+        .long_help = "Número máximo de ciclos de 'Pensamento-Ação-Observação' antes de interromper o agente.",
+        .allowed_values = {},
+        .apply = [](Options &cfg, std::string_view val) { cfg.max_iterations = std::stoi(std::string(val)); },
+        .required = false
+    },
+    {
+        .long_name = "yes",
+        .short_name = 'y',
+        .takes_value = false,
+        .value_name = "",
+        .help = "Auto-aprovar scripts Lua.",
+        .long_help = "Executa blocos <code> gerados pelo LLM imediatamente sem pedir confirmação do usuário.",
+        .allowed_values = {},
+        .apply = [](Options &cfg, std::string_view) { cfg.auto_approve = true; },
+        .required = false
     },
     {
         .long_name = "version",
         .short_name = 'V',
         .takes_value = false,
         .value_name = "",
-        .help = "Show version information",
-        .long_help = "Displays the application version and exits.",
+        .help = "Mostra versão.",
+        .long_help = "Exibe a versão atual do cppllmcoder e informações de build.",
         .allowed_values = {},
         .apply = [](Options &cfg, std::string_view) { cfg.version = true; },
-        .required = false,
-    },
-    {
-        .long_name = "width",
-        .short_name = 'W',
-        .takes_value = true,
-        .value_name = "<pixels>",
-        .help = "Set window width",
-        .long_help = "Sets the initial window width in pixels.",
-        .allowed_values = {},
-        .apply =
-            [](Options &cfg, std::string_view val) {
-                cfg.width = std::stoi(std::string(val));
-            },
-        .required = false,
-    },
-    {
-        .long_name = "height",
-        .short_name = 'H',
-        .takes_value = true,
-        .value_name = "<pixels>",
-        .help = "Set window height",
-        .long_help = "Sets the initial window height in pixels.",
-        .allowed_values = {},
-        .apply =
-            [](Options &cfg, std::string_view val) {
-                cfg.height = std::stoi(std::string(val));
-            },
-        .required = false,
-    },
-    {
-        .long_name = "url",
-        .short_name = 'u',
-        .takes_value = true,
-        .value_name = "<url>",
-        .help = "Navigate to custom URL",
-        .long_help = "Navigate to a custom URL instead of the default.\n"
-                     "Useful for development with external servers.",
-        .allowed_values = {},
-        .apply = [](Options &cfg,
-                    std::string_view val) { cfg.url = std::string(val); },
-        .required = false,
-    },
+        .required = false
+    }
 }};
-
-// =============================================================================
-// Criar parser configurado
-// =============================================================================
 
 inline cli::OptionParser<Options> create_parser() {
     return cli::OptionParser<Options>(OPTION_SPECS)
-        .with_description(
-            "WebView-based desktop application with Vite frontend.")
-        .with_examples(
-            "  app                    # Run with auto-detected mode\n"
-            "  app --dev              # Force development mode\n"
-            "  app --prod             # Force production mode\n"
-            "  app --url http://localhost:3000  # Use custom URL\n"
-            "  app -W 1920 -H 1080    # Custom window size\n");
+        .with_description("CPP-LLM-CODER: Agente terminal para análise técnica e reversa.")
+        .with_examples("  cppllmcoder -w ./binaries -m qwen2.5-coder:7b\n"
+                       "  cppllmcoder --db ./brain.db --yes\n");
 }
 
 } // namespace app

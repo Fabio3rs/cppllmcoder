@@ -6,6 +6,7 @@
 - `tests/` houses GoogleTest cases and its own CMake target; keep new coverage close to the code it exercises.
 - `docs/` stores design notes and research ideas; favor out-of-source builds in `build/` to keep the tree clean.
 - Runtime data described in the README lives under `.cppllmcoder/` (e.g., `brain.db`).
+- The SQLite schema uses `created_at` / `updated_at` with millisecond precision (`STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW')`) and triggers to refresh `updated_at`; `execution_logs` also stores `duration_ms` to expose slow Lua/tool runs.
 
 ## Build, Test, and Development Commands
 - `cmake -S . -B build -DENABLE_TESTS=ON -DENABLE_SANITIZERS=ON` — configure with tests and sanitizers enabled.
