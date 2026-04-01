@@ -1,15 +1,37 @@
 cmake_minimum_required(VERSION 3.12)
 project(cppllmcoder C CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_EXTENSIONS ON)
 set(CMAKE_C_EXTENSIONS ON)
 
+if (${CMAKE_BUILD_TYPE} STREQUAL "Debug")
+    set(SHOULD_ENABLE_SANITIZERS ON)
+else()
+    set(SHOULD_ENABLE_SANITIZERS OFF)
+endif()
+
 option(ENABLE_TESTS "Enable tests" ON)
-option(ENABLE_SANITIZERS "Enable sanitizers" ON)
+option(ENABLE_SANITIZERS "Enable sanitizers" ${SHOULD_ENABLE_SANITIZERS})
+
+# Dependências
+find_package(SQLite3 REQUIRED)
+find_package(Lua REQUIRED)
+
+set(SOL2_TESTS OFF CACHE BOOL "" FORCE)
+set(SOL2_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SOL2_INTEROP_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SOL2_DYNAMIC_LOADING_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SOL2_SINGLE OFF CACHE BOOL "" FORCE)
+set(SOL2_DOCS OFF CACHE BOOL "" FORCE)
+set(SOL2_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+
+add_subdirectory(vendor/sol2)
+add_subdirectory(vendor/openai-cpp)
+include("vendor/cmake/build_sqlite-vec.cmake")
 
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
     message(STATUS "Setting G++ flags")
@@ -37,6 +59,7 @@ endif()
 
 if(ENABLE_SANITIZERS)
     # Common sanitizer flags for better security and debugging
+    message(STATUS "Enabling sanitizers")
     set(SANITIZER_FLAGS
         -fno-omit-frame-pointer
         -fsanitize=address
@@ -105,6 +128,7 @@ filter_out(EXCLUDE_FILES SOURCES)
 message(STATUS "Sources: ${SOURCES}")
 
 add_library(cppllmcoder_lib STATIC ${SOURCES})
+target_link_libraries(cppllmcoder_lib PUBLIC SQLite::SQLite3 sqlite_vec sol2::sol2 openai-cpp)
 add_executable(cppllmcoder "src/main.cpp")
 target_link_libraries(cppllmcoder cppllmcoder_lib)
 

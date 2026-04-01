@@ -1,0 +1,12 @@
+[submodule "vendor/sqlite-vec"]
+	path = vendor/sqlite-vec
+	url = https://github.com/asg017/sqlite-vec
+[submodule "vendor/sol2"]
+	path = vendor/sol2
+	url = https://github.com/ThePhD/sol2.git
+[submodule "vendor/openai-cpp"]
+	path = vendor/openai-cpp
+	url = https://github.com/olrea/openai-cpp.git
+[submodule "vendor/FTXUI"]
+	path = vendor/FTXUI
+	url = https://github.com/ArthurSonzogni/FTXUI.git
