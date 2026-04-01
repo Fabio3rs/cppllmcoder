@@ -29,8 +29,11 @@ set(SOL2_SINGLE OFF CACHE BOOL "" FORCE)
 set(SOL2_DOCS OFF CACHE BOOL "" FORCE)
 set(SOL2_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 
+set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+
 add_subdirectory(vendor/sol2)
 add_subdirectory(vendor/openai-cpp)
+add_subdirectory(vendor/FTXUI)
 include("vendor/cmake/build_sqlite-vec.cmake")
 
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
@@ -128,7 +131,11 @@ filter_out(EXCLUDE_FILES SOURCES)
 message(STATUS "Sources: ${SOURCES}")
 
 add_library(cppllmcoder_lib STATIC ${SOURCES})
-target_link_libraries(cppllmcoder_lib PUBLIC SQLite::SQLite3 sqlite_vec sol2::sol2 openai-cpp)
+target_include_directories(cppllmcoder_lib PUBLIC ${LUA_INCLUDE_DIR})
+target_link_libraries(cppllmcoder_lib PUBLIC SQLite::SQLite3 sqlite_vec ${LUA_LIBRARIES} sol2::sol2 openai-cpp ftxui::screen
+    ftxui::dom
+    ftxui::component
+)
 add_executable(cppllmcoder "src/main.cpp")
 target_link_libraries(cppllmcoder cppllmcoder_lib)
 
