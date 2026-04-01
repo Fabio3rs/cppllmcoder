@@ -215,7 +215,109 @@ int main() {
     test_sqlitevec_embd();
 }*/
 
-#include <ftxui/component/component.hpp>
+// Esboço do Loop Principal na PoC
+#include "agents/agent_action.hpp"
+#include "lua_context.hpp"
+
+int main(int argc, char *argv[]) {
+    // 1. Parse CLI Options
+    auto parser = app::create_parser();
+    auto result = parser.parse(argc, argv);
+
+    switch (result.status) {
+    case cli::ParseStatus::ShowHelp:
+        std::cout << parser.generate_help(argv[0]);
+        return 0;
+
+    case cli::ParseStatus::ShowHelpVerbose:
+        std::cout << parser.generate_help_verbose(argv[0]);
+        return 0;
+
+    case cli::ParseStatus::ShowVersion:
+        std::print("CPP-LLM-CODER v0.1.0-alpha\n");
+        return 0;
+
+    case cli::ParseStatus::ShowCompletion:
+        // Completion já foi tratada internamente, apenas sai
+        return 0;
+
+    case cli::ParseStatus::Error:
+        std::cerr << "Erro: " << result.error_message << "\n";
+        std::cerr << "Use --help para ver as opções disponíveis.\n";
+        return 1;
+
+    case cli::ParseStatus::Ok:
+        break;
+    }
+
+    auto &cfg = *result.config;
+
+    // 2. Init Core
+    LuaContext lua;
+    auto &openai = openai::start("ollama", "", true, cfg.endpoint);
+
+    std::string user_input;
+    std::string system_context =
+        R"(Você é o CPP-LLM-CODER. Você opera via scripts LUA v5.4.
+Sempre que precisar interagir com o sistema (arquivos, banco de dados, busca vetorial),
+use o seguinte formato:
+
+Pensamento: [Seu raciocínio aqui]
+<code>
+  -- Seu script Lua aqui
+  local result = fs.ls(".")
+  return result[1]
+</code>
+
+Ferramentas disponíveis (funções Lua):
+- fs.read_range(path, start, size)
+- db.search_vector(query, k)
+- db.add_pointer(id, summary, metadata)
+- agent.spawn(task_description)
+)";
+
+    while (true) {
+        std::print("\n[User]> ");
+        if (!std::getline(std::cin, user_input) || user_input == "exit")
+            break;
+
+        // Turno do Agente
+        std::println("\n[Pensando...]");
+        nlohmann::json request;
+        request["model"] = cfg.model;
+        request["messages"] = {
+            {{"role", "system"}, {"content", system_context}},
+            {{"role", "user"}, {"content", user_input}}};
+
+        // Dica de Debug: Se quiser ver exatamente o que está sendo enviado
+        std::println("Payload: {}", request.dump(2));
+
+        // Chamada ao Ollama
+        auto chat = openai.chat.create(request);
+
+        std::string response = chat["choices"][0]["message"]["content"];
+
+        // 3. Extração e Execução
+        auto action = AgentAction::parse(response);
+        std::println("\n[🤖 Pensamento]: {}", action.thought);
+
+        if (action.has_code) {
+            std::println("\n[🛠️ Executando Lua]:\n{}", action.lua_code);
+
+            auto lua_res = lua.execute(action.lua_code);
+
+            if (lua_res) {
+                std::println("\n[✅ Retorno Lua]: {}", *lua_res);
+                // Aqui você reinjetaria o retorno no próximo turno se quiser
+                // automação
+            } else {
+                std::println("\n[❌ Erro Lua]: {}", lua_res.error());
+            }
+        }
+    }
+}
+
+/*#include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
 #include <ftxui/dom/elements.hpp>
 #include <string>
@@ -330,3 +432,4 @@ int main(int argc, char **argv) {
     screen.Loop(renderer);
     return 0;
 }
+*/
