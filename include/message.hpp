@@ -14,7 +14,9 @@ struct Message {
     size_t id; // ID sequencial ou vindo do DB
     MessageRole role;
     std::string content;
-    std::string timestamp;              // ISO8601 com ms
+    std::string session_id;             // FK para sessions.id
+    std::string created_at;             // ISO8601 com ms (persistido no DB)
+    std::string updated_at;             // ISO8601 com ms (persistido no DB)
     std::chrono::milliseconds duration; // Tempo gasto para gerar a resposta
                                         // (útil para análise de performance)
     int token_count = 0;                // Cache para não recontar toda hora

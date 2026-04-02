@@ -10,3 +10,6 @@
 [submodule "vendor/FTXUI"]
 	path = vendor/FTXUI
 	url = https://github.com/ArthurSonzogni/FTXUI.git
+[submodule "tests/vendor/cpp-httplib"]
+	path = tests/vendor/cpp-httplib
+	url = https://github.com/yhirose/cpp-httplib.git

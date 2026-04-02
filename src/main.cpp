@@ -15,23 +15,17 @@
 #include <utility>
 #include <vector>
 
-/*
 static int dry_run() {
     LuaContext engine;
 
     // Simulando o que o Qwen/Claude enviaria dentro da tag <code>
     std::string mock_llm_code = R"lua(
-        local files = fs.ls(".")
-        print("Arquivos encontrados: " .. #files)
-
-        local info = db.get_pointer("P_42")
-        print("DB Info: " .. info)
-
-        if #files > 0 then
-            agent.spawn("Analisar primeiro arquivo: " .. files[1])
+        -- Demo mínimo sem bindings extras (fs/db/agent não estão expostos aqui)
+        local sum = 0
+        for i = 1, 5 do
+            sum = sum + i
         end
-
-        return "Script finalizado."
+        return "Lua demo ok; sum=" .. sum
     )lua";
 
     auto res = engine.execute(mock_llm_code);
@@ -213,10 +207,10 @@ static void test_sqlitevec_embd() {
 int main() {
     dry_run();
     test_sqlitevec_embd();
-}*/
+}
 
 // Esboço do Loop Principal na PoC
-#include "agents/agent_action.hpp"
+/*#include "agents/agent_action.hpp"
 #include "lua_context.hpp"
 
 int main(int argc, char *argv[]) {
@@ -259,8 +253,8 @@ int main(int argc, char *argv[]) {
     std::string user_input;
     std::string system_context =
         R"(Você é o CPP-LLM-CODER. Você opera via scripts LUA v5.4.
-Sempre que precisar interagir com o sistema (arquivos, banco de dados, busca vetorial),
-use o seguinte formato:
+Sempre que precisar interagir com o sistema (arquivos, banco de dados, busca
+vetorial), use o seguinte formato:
 
 Pensamento: [Seu raciocínio aqui]
 <code>
@@ -315,7 +309,7 @@ Ferramentas disponíveis (funções Lua):
             }
         }
     }
-}
+}*/
 
 /*#include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>
