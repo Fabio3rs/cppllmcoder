@@ -1,31 +1,19 @@
 #pragma once
 
-#include <array>
-#include <string>
-#include <string_view>
-#include <span>
 #include "cli/option_parser_decls.hpp"
 #include "cli/option_parser_impl.hpp"
+#include <array>
+#include <span>
+#include <string>
+#include <string_view>
+#include "options.hpp"
 
 namespace app {
 
-struct Options {
-    bool verbose = false;
-    bool version = false;
-    bool auto_approve = false;
-    int max_iterations = 10;
-    std::string db_path = ".cppllmcoder/brain.db";
-    std::string workdir = ".";
-    std::string model = "qwen2.5-coder:7b";
-    std::string endpoint = "http://localhost:11434/v1/";
-};
-
-// Valores permitidos para demonstração de restrição (exemplo: modelos homologados)
+// Valores permitidos para demonstração de restrição (exemplo: modelos
+// homologados)
 inline constexpr std::array<std::string_view, 3> ALLOWED_MODELS = {
-    "qwen2.5-coder:7b", 
-    "qwen2.5-coder:14b", 
-    "codestral:latest"
-};
+    "qwen2.5-coder:7b", "qwen2.5-coder:14b", "codestral:latest"};
 
 inline constexpr std::array<cli::OptionSpec<Options>, 8> OPTION_SPECS = {{
     {
@@ -120,7 +108,8 @@ inline constexpr std::array<cli::OptionSpec<Options>, 8> OPTION_SPECS = {{
 
 inline cli::OptionParser<Options> create_parser() {
     return cli::OptionParser<Options>(OPTION_SPECS)
-        .with_description("CPP-LLM-CODER: Agente terminal para análise técnica e reversa.")
+        .with_description(
+            "CPP-LLM-CODER: Agente terminal para análise técnica e reversa.")
         .with_examples("  cppllmcoder -w ./binaries -m qwen2.5-coder:7b\n"
                        "  cppllmcoder --db ./brain.db --yes\n");
 }
