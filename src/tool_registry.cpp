@@ -49,26 +49,32 @@ DefaultToolRegistry::topKDocs(std::string_view user_input, size_t k) const {
         const std::string name_l = to_lower(meta.name);
         const std::string desc_l = to_lower(meta.description);
         if (!query.empty()) {
-            if (name_l.find(query) != std::string::npos)
+            if (name_l.find(query) != std::string::npos) {
                 score += 2;
-            if (desc_l.find(query) != std::string::npos)
+            }
+            if (desc_l.find(query) != std::string::npos) {
                 score += 1;
+            }
             for (const auto &arg : meta.arguments) {
                 const auto arg_l = to_lower(arg.name);
-                if (arg_l.find(query) != std::string::npos)
+                if (arg_l.find(query) != std::string::npos) {
                     score += 1;
+                }
             }
         }
-        if (meta.always_show_in_prompt)
+
+        if (meta.always_show_in_prompt) {
             score = std::max(score, 1000); // bubble to front
+        }
 
         scored.emplace_back(score, view);
     }
 
     // Sort by score desc, then name asc for stability
     std::ranges::sort(scored, [](const auto &a, const auto &b) {
-        if (a.first != b.first)
+        if (a.first != b.first) {
             return a.first > b.first;
+        }
         return a.second.name < b.second.name;
     });
 
@@ -84,10 +90,12 @@ DefaultToolRegistry::topKDocs(std::string_view user_input, size_t k) const {
     }
 
     for (const auto &pair : scored) {
-        if (pair.second.always)
+        if (pair.second.always) {
             continue;
-        if (out.size() >= always_count + k)
+        }
+        if (out.size() >= always_count + k) {
             break;
+        }
         out.push_back(pair.second);
     }
 

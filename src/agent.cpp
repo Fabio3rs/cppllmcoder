@@ -311,4 +311,13 @@ void Agent::persist_message(const Message &msg) {
     }
 }
 
+void Agent::persist_message(Message &msg) {
+    if (brain_store) {
+        brain_store->insertMessage(msg);
+    }
+    if (execution_logger) {
+        execution_logger->logMessage(msg, session_info);
+    }
+}
+
 void Agent::prune_context() {}

@@ -17,6 +17,7 @@ class BrainStore {
 
     std::string ensureSession(const SessionInfo &session);
     void ensureTool(const ToolMetadata &meta);
+    void insertMessage(Message &msg);
     void insertMessage(const Message &msg);
     void insertToolInvocation(const ToolInvocationContext &ctx,
                               const ToolDecision &decision,

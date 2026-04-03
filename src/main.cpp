@@ -1,10 +1,13 @@
+#include "fs_tools.hpp"
 #include "stdafx.hpp"
 
 #include "cli_options.hpp"
 #include "embedding_utils.hpp"
 #include "exe_path_utils.hpp"
 #include "lua_context.hpp"
+#include "prompt_manager.hpp"
 #include "sqlite3raii.hpp"
+#include <filesystem>
 #include <memory>
 #include <openai/openai.hpp>
 #include <print>
@@ -15,7 +18,7 @@
 #include <utility>
 #include <vector>
 
-static int dry_run() {
+/*static int dry_run() {
     LuaContext engine;
 
     // Simulando o que o Qwen/Claude enviaria dentro da tag <code>
@@ -207,10 +210,10 @@ static void test_sqlitevec_embd() {
 int main() {
     dry_run();
     test_sqlitevec_embd();
-}
+}*/
 
 // Esboço do Loop Principal na PoC
-/*#include "agents/agent_action.hpp"
+#include "agents/agent_action.hpp"
 #include "lua_context.hpp"
 
 int main(int argc, char *argv[]) {
@@ -244,10 +247,30 @@ int main(int argc, char *argv[]) {
         break;
     }
 
-    auto &cfg = *result.config;
+    [[maybe_unused]] auto &cfg = *result.config;
+
+    if (cfg.workdir.empty()) {
+        cfg.workdir =
+            std::filesystem::absolute(std::filesystem::current_path()).string();
+    }
+
+    auto toolreg = buildDefaultToolRegistry(cfg);
+
+    auto docs = toolreg->topKDocs("", 10);
+
+    for (const auto &doc : docs) {
+        std::println("Doc: {}; Brief {}", doc.name, doc.brief);
+    }
+
+    std::println("");
+
+    DefaultPromptManager prompt_manager;
+    auto prompt = prompt_manager.buildSystemPrompt({}, docs);
+
+    std::println("Prompt: {}", prompt);
 
     // 2. Init Core
-    LuaContext lua;
+    /*LuaContext lua;
     auto &openai = openai::start("ollama", "", true, cfg.endpoint);
 
     std::string user_input;
@@ -308,8 +331,8 @@ Ferramentas disponíveis (funções Lua):
                 std::println("\n[❌ Erro Lua]: {}", lua_res.error());
             }
         }
-    }
-}*/
+    }*/
+}
 
 /*#include <ftxui/component/component.hpp>
 #include <ftxui/component/screen_interactive.hpp>

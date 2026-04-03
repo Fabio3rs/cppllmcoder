@@ -1,3 +1,3 @@
 #include "stdafx.hpp"
 
-// Library implementation.
+// Library implementation. Add shared helpers here.

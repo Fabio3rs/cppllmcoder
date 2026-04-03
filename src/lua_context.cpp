@@ -38,8 +38,8 @@ void LuaContext::bindTools(
 
     auto toolInvoker = [&tools_tbl, invoker](const ToolMetadata &meta,
                                              const ITool &tool) {
-        tools_tbl[meta.name] = [&tool, meta, invoker](sol::object args,
-                                                      sol::this_state s) {
+        auto bound_fn = [&tool, meta, invoker](sol::object args,
+                                               sol::this_state s) {
             const std::string prefix = "error: tool invocation failed - ";
             try {
                 std::expected<sol::object, std::string> result;
@@ -59,6 +59,37 @@ void LuaContext::bindTools(
                 return sol::make_object(s, prefix + "unknown exception");
             }
         };
+
+        // Always expose the flat name (e.g., "fs.read") for backwards
+        // compatibility with existing Lua snippets.
+        tools_tbl[meta.name] = bound_fn;
+
+        // Additionally, create nested tables when the tool name contains
+        // dots so scripts can call tools.fs.read().
+        if (meta.name.find('.') == std::string::npos)
+            return;
+
+        sol::table current = tools_tbl;
+        size_t start = 0;
+        while (true) {
+            const auto dot = meta.name.find('.', start);
+            const auto part = meta.name.substr(start, dot - start);
+
+            if (dot == std::string::npos) {
+                // Final segment: bind the function.
+                current[part] = bound_fn;
+                break;
+            }
+
+            // Intermediate segment: ensure a table exists and descend.
+            if (!current[part].valid() ||
+                current[part].get_type() != sol::type::table) {
+                sol::state_view st(current.lua_state());
+                current[part] = st.create_table();
+            }
+            current = current[part];
+            start = dot + 1;
+        }
     };
     registry.forEach(toolInvoker);
 }

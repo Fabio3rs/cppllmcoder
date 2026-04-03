@@ -35,6 +35,10 @@ class SqliteDb {
     sqlite3 *get() const noexcept { return db_.get(); }
     sqlite3_db_ptr &&release() noexcept { return std::move(db_); }
 
+    auto lastInsertRowId() const -> int64_t {
+        return sqlite3_last_insert_rowid(db_.get());
+    }
+
     void exec(std::string_view sql) const;
     SqliteStatement prepare(std::string_view sql, const char *context) const;
 

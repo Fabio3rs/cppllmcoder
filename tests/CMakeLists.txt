@@ -10,6 +10,7 @@ add_executable(cppllmcoder_tests
     test_brain_store.cpp
     test_chat_stream.cpp
     test_agent_run_step.cpp
+    test_fs_tools.cpp
 )
 target_compile_definitions(cppllmcoder_tests PRIVATE "CMAKE_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
 target_link_libraries(cppllmcoder_tests cppllmcoder_lib GTest::GTest GTest::Main)

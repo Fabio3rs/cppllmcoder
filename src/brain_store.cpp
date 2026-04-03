@@ -141,6 +141,12 @@ void BrainStore::ensureTool(const ToolMetadata &meta) {
     stmt.clear();
 }
 
+void BrainStore::insertMessage(Message &msg) {
+    insertMessage(static_cast<const Message &>(msg));
+    // Update msg.id with last inserted ID
+    msg.id = db_.lastInsertRowId();
+}
+
 void BrainStore::insertMessage(const Message &msg) {
     if (!stmt_insert_message_.has_value()) {
         stmt_insert_message_.emplace(db_.prepare(

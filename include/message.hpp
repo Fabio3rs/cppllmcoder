@@ -11,7 +11,7 @@ enum class MessageRole {
 };
 
 struct Message {
-    size_t id; // ID sequencial ou vindo do DB
+    int64_t id; // ID sequencial ou vindo do DB
     MessageRole role;
     std::string content;
     std::string session_id;             // FK para sessions.id
