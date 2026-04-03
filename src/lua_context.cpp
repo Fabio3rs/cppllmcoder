@@ -3,6 +3,7 @@
 #include "json_utils.hpp"
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -36,8 +37,8 @@ void LuaContext::bindTools(
         invoker) {
     auto tools_tbl = lua.create_named_table("tools");
 
-    auto toolInvoker = [&tools_tbl, invoker](const ToolMetadata &meta,
-                                             const ITool &tool) {
+    auto toolInvoker = [&tools_tbl, invoker, this](const ToolMetadata &meta,
+                                                   const ITool &tool) {
         auto bound_fn = [&tool, meta, invoker](sol::object args,
                                                sol::this_state s) {
             const std::string prefix = "error: tool invocation failed - ";
@@ -64,32 +65,43 @@ void LuaContext::bindTools(
         // compatibility with existing Lua snippets.
         tools_tbl[meta.name] = bound_fn;
 
+        // Also expose top-level functions (no dot) directly in the sandbox
+        // environment so scripts can call done_task() without prefix.
+        if (meta.name.find('.') == std::string::npos) {
+            sandbox_env[meta.name] = bound_fn;
+        }
+
         // Additionally, create nested tables when the tool name contains
-        // dots so scripts can call tools.fs.read().
+        // dots so scripts can call tools.fs.read() OR fs.read().
         if (meta.name.find('.') == std::string::npos)
             return;
 
-        sol::table current = tools_tbl;
-        size_t start = 0;
-        while (true) {
-            const auto dot = meta.name.find('.', start);
-            const auto part = meta.name.substr(start, dot - start);
+        auto build_nested = [&](sol::table root) {
+            sol::table current = root;
+            size_t start = 0;
+            while (true) {
+                const auto dot = meta.name.find('.', start);
+                const auto part = meta.name.substr(start, dot - start);
 
-            if (dot == std::string::npos) {
-                // Final segment: bind the function.
-                current[part] = bound_fn;
-                break;
-            }
+                if (dot == std::string::npos) {
+                    // Final segment: bind the function.
+                    current[part] = bound_fn;
+                    break;
+                }
 
-            // Intermediate segment: ensure a table exists and descend.
-            if (!current[part].valid() ||
-                current[part].get_type() != sol::type::table) {
-                sol::state_view st(current.lua_state());
-                current[part] = st.create_table();
+                // Intermediate segment: ensure a table exists and descend.
+                if (!current[part].valid() ||
+                    current[part].get_type() != sol::type::table) {
+                    sol::state_view st(current.lua_state());
+                    current[part] = st.create_table();
+                }
+                current = current[part];
+                start = dot + 1;
             }
-            current = current[part];
-            start = dot + 1;
-        }
+        };
+
+        build_nested(tools_tbl);   // tools.fs.read()
+        build_nested(sandbox_env); // fs.read()
     };
     registry.forEach(toolInvoker);
 }
@@ -257,9 +269,27 @@ LuaContext::luaObjectToJson(const sol::object &obj) {
         }
         case sol::type::nil:
             return "null";
-        default:
+        default: {
+            // Tenta converter via tostring (suporta __tostring de metatables)
+            sol::state_view lua(o.lua_state());
+            auto maybe_tostring =
+                lua["tostring"].get<std::optional<sol::protected_function>>();
+            if (maybe_tostring) {
+                sol::protected_function_result r = (*maybe_tostring)(o);
+                if (r.valid()) {
+                    sol::object s = r.get<sol::object>();
+                    if (s.get_type() == sol::type::string) {
+                        return std::string{"\""} +
+                               json_utils::escapeJson(s.as<std::string>()) +
+                               "\"";
+                    }
+                } else {
+                    r.abandon();
+                }
+            }
             return std::unexpected(
                 "unsupported Lua type for JSON serialization");
+        }
         }
     };
 

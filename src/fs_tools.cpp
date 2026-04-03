@@ -1,6 +1,7 @@
 #include "fs_tools.hpp"
 
 #include "agent.hpp"
+#include "done_task_tool.hpp"
 #include "options.hpp"
 #include "tool_registry.hpp"
 
@@ -247,6 +248,33 @@ struct DirEntryRow {
     std::string relpath;
 };
 
+sol::table ensureDirEntryMetatable(sol::state_view lua) {
+    const char *kMetaKey = "__direntry_meta";
+    if (lua[kMetaKey].valid()) {
+        return lua[kMetaKey];
+    }
+
+    sol::table meta = lua.create_table();
+    meta["is_dir"] = [](const sol::table &self) {
+        return self.get_or<std::string>("kind", "") == "dir";
+    };
+    meta["is_file"] = [](const sol::table &self) {
+        return self.get_or<std::string>("kind", "") == "file";
+    };
+    meta["is_symlink"] = [](const sol::table &self) {
+        return self.get_or<std::string>("kind", "") == "symlink";
+    };
+    meta["type"] = [](const sol::table &self) {
+        return self.get_or<std::string>("kind", "");
+    };
+    meta[sol::meta_function::to_string] = [](const sol::table &self) {
+        return self.get_or<std::string>("name", "");
+    };
+
+    lua[kMetaKey] = meta;
+    return meta;
+}
+
 class FsListTool final : public ITool, private FsToolBase {
   public:
     FsListTool(std::string root, size_t max_read_bytes)
@@ -265,7 +293,9 @@ class FsListTool final : public ITool, private FsToolBase {
                            false}},
             .usage_example =
                 "tools.fs.ls({dir='.', depth=1, include_files=true})",
-            .returns = "array of {name, kind, size, mtime, relpath} sorted",
+            .returns = "array of tables (fields: name, kind, size, mtime, "
+                       "relpath) with metatable methods is_dir/is_file/"
+                       "is_symlink/type() and tostring()->name, sorted",
             .danger_tags = {},
             .is_sensitive = false,
             .always_show_in_prompt = true};
@@ -274,6 +304,7 @@ class FsListTool final : public ITool, private FsToolBase {
     std::expected<sol::object, std::string>
     invoke(const sol::object &lua_args) const override {
         sol::state_view lua(lua_args.lua_state());
+        sol::table direntry_meta = ensureDirEntryMetatable(lua);
         std::string dir = ".";
         int depth = 1;
         bool include_files = true;
@@ -382,6 +413,7 @@ class FsListTool final : public ITool, private FsToolBase {
             t["size"] = static_cast<double>(r.size);
             t["mtime"] = r.mtime;
             t["relpath"] = r.relpath;
+            t[sol::metatable_key] = direntry_meta;
             arr[idx++] = t;
         }
         return sol::make_object(lua, arr);
@@ -397,9 +429,10 @@ void registerFilesystemTools(ToolRegistry &registry, const std::string &root,
     registry.registerTool(std::make_shared<FsReadTool>(root, max_read_bytes));
 }
 
-std::shared_ptr<ToolRegistry> buildDefaultToolRegistry(const app::Options &opts,
-                                                       size_t max_read_bytes) {
+std::pair<std::shared_ptr<ToolRegistry>, std::shared_ptr<DoneTaskSignal>>
+buildDefaultToolRegistry(const app::Options &opts, size_t max_read_bytes) {
     auto reg = std::make_shared<DefaultToolRegistry>();
     registerFilesystemTools(*reg, opts.workdir, max_read_bytes);
-    return reg;
+    auto signal = registerDoneTaskTool(*reg);
+    return {reg, signal};
 }

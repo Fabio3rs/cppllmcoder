@@ -173,6 +173,25 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
     using time_utils::to_iso8601_ms;
 
     const auto now = now_system();
+
+    if (history.empty()) {
+        // System prompt é o primeiro
+        auto tools = tool_registry->topKDocs("", 16);
+
+        auto system_prompt = prompt_manager->buildSystemPrompt(history, tools);
+
+        Message system_msg{.id = 0,
+                           .role = MessageRole::System,
+                           .content = system_prompt,
+                           .session_id = session_info.id,
+                           .created_at = to_iso8601_ms(now),
+                           .updated_at = to_iso8601_ms(now),
+                           .duration = std::chrono::milliseconds{0},
+                           .token_count = 0};
+        history.push_back(system_msg);
+        persist_message(history.back());
+    }
+
     Message user_msg{.id = 0,
                      .role = MessageRole::User,
                      .content = std::string(input),

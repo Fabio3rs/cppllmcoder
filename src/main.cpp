@@ -1,15 +1,19 @@
 #include "fs_tools.hpp"
 #include "stdafx.hpp"
 
+#include "agent.hpp"
+#include "agent_driver.hpp"
 #include "cli_options.hpp"
-#include "embedding_utils.hpp"
-#include "exe_path_utils.hpp"
-#include "lua_context.hpp"
-#include "prompt_manager.hpp"
+#include "done_task_tool.hpp"
+#include "runtime_defaults.hpp"
 #include "sqlite3raii.hpp"
+
+#include <atomic>
 #include <filesystem>
+#include <iostream>
 #include <memory>
 #include <openai/openai.hpp>
+#include <optional>
 #include <print>
 #include <ranges>
 #include <span>
@@ -247,91 +251,84 @@ int main(int argc, char *argv[]) {
         break;
     }
 
-    [[maybe_unused]] auto &cfg = *result.config;
+    auto &cfg = *result.config;
 
     if (cfg.workdir.empty()) {
         cfg.workdir =
             std::filesystem::absolute(std::filesystem::current_path()).string();
     }
 
-    auto toolreg = buildDefaultToolRegistry(cfg);
+    // Build runtime defaults (tools, prompt manager, consent, logger, stats)
+    const std::string log_path = ".cppllmcoder/agent.log";
+    auto runtime = buildDefaultRuntime(cfg, log_path, /*echo_stdout=*/true);
 
-    auto docs = toolreg->topKDocs("", 10);
+    // Show available tools in the prompt for debugging
+    auto docs = runtime.tools->topKDocs("", 16);
+    DefaultPromptManager prompt_manager_preview;
+    auto prompt = prompt_manager_preview.buildSystemPrompt({}, docs);
+    std::println("Prompt preview:\n{}\n", prompt);
 
-    for (const auto &doc : docs) {
-        std::println("Doc: {}; Brief {}", doc.name, doc.brief);
-    }
+    // Prepare agent
+    Agent agent(cfg, runtime.tools, runtime.prompts, runtime.consent,
+                runtime.logger, runtime.stats);
 
-    std::println("");
+    // Simple driver that echoes streamed tokens and tool results to stdout
+    class StdIODriver : public IAgentDriver {
+      public:
+        void on_token(std::string_view token) override {
+            std::cout << token << std::flush;
+        }
+        void on_turn_complete(std::string_view response) override {
+            std::cout << "\n[complete]\n" << response << "\n";
+        }
+        void on_tool_result(std::string_view tool_name, bool success,
+                            std::string_view summary) override {
+            std::cout << "\n[tool] " << tool_name
+                      << " success=" << (success ? "true" : "false")
+                      << " summary=" << summary << "\n";
+        }
+        bool stop_requested() const override {
+            return stop_.load(std::memory_order_relaxed);
+        }
+        void request_stop() override {
+            stop_.store(true, std::memory_order_relaxed);
+        }
+        std::optional<std::string> next_injection() override { return {}; }
+        void inject(std::string) override {}
+        std::optional<std::chrono::milliseconds> timeout() const override {
+            return std::nullopt;
+        }
+        bool should_finish(int) const override { return false; }
 
-    DefaultPromptManager prompt_manager;
-    auto prompt = prompt_manager.buildSystemPrompt({}, docs);
+      private:
+        std::atomic<bool> stop_{false};
+    };
 
-    std::println("Prompt: {}", prompt);
+    StdIODriver driver;
 
-    // 2. Init Core
-    /*LuaContext lua;
-    auto &openai = openai::start("ollama", "", true, cfg.endpoint);
+    // OpenAI-compatible client (Ollama default)
+    openai::OpenAI openai_client{"", "", false, cfg.endpoint};
 
     std::string user_input;
-    std::string system_context =
-        R"(Você é o CPP-LLM-CODER. Você opera via scripts LUA v5.4.
-Sempre que precisar interagir com o sistema (arquivos, banco de dados, busca
-vetorial), use o seguinte formato:
-
-Pensamento: [Seu raciocínio aqui]
-<code>
-  -- Seu script Lua aqui
-  local result = fs.ls(".")
-  return result[1]
-</code>
-
-Ferramentas disponíveis (funções Lua):
-- fs.read_range(path, start, size)
-- db.search_vector(query, k)
-- db.add_pointer(id, summary, metadata)
-- agent.spawn(task_description)
-)";
-
     while (true) {
         std::print("\n[User]> ");
-        if (!std::getline(std::cin, user_input) || user_input == "exit")
+        if (!std::getline(std::cin, user_input))
+            break;
+        if (user_input == "exit" || user_input == "quit")
             break;
 
-        // Turno do Agente
-        std::println("\n[Pensando...]");
-        nlohmann::json request;
-        request["model"] = cfg.model;
-        request["messages"] = {
-            {{"role", "system"}, {"content", system_context}},
-            {{"role", "user"}, {"content", user_input}}};
-
-        // Dica de Debug: Se quiser ver exatamente o que está sendo enviado
-        std::println("Payload: {}", request.dump(2));
-
-        // Chamada ao Ollama
-        auto chat = openai.chat.create(request);
-
-        std::string response = chat["choices"][0]["message"]["content"];
-
-        // 3. Extração e Execução
-        auto action = AgentAction::parse(response);
-        std::println("\n[🤖 Pensamento]: {}", action.thought);
-
-        if (action.has_code) {
-            std::println("\n[🛠️ Executando Lua]:\n{}", action.lua_code);
-
-            auto lua_res = lua.execute(action.lua_code);
-
-            if (lua_res) {
-                std::println("\n[✅ Retorno Lua]: {}", *lua_res);
-                // Aqui você reinjetaria o retorno no próximo turno se quiser
-                // automação
-            } else {
-                std::println("\n[❌ Erro Lua]: {}", lua_res.error());
-            }
+        try {
+            agent.run_step(user_input, driver, openai_client);
+        } catch (const std::exception &ex) {
+            std::cerr << "Erro ao chamar LLM: " << ex.what() << "\n";
+            break;
         }
-    }*/
+
+        if (runtime.done_signal && runtime.done_signal->consume()) {
+            std::println("done_task() chamado. Encerrando a sessão.");
+            break;
+        }
+    }
 }
 
 /*#include <ftxui/component/component.hpp>
