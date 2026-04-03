@@ -133,6 +133,7 @@ app::Options make_opts(std::string db_path, const std::string &endpoint) {
     opts.db_path = std::move(db_path);
     opts.endpoint = endpoint;
     opts.model = "mock-model";
+    opts.max_iterations = 1;
     return opts;
 }
 
@@ -295,6 +296,7 @@ TEST(AgentRunStep, ExecutesLuaWhenCodePresent) {
             return true;
         });
     });
+
     try {
         server.start();
     } catch (...) {

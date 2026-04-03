@@ -9,6 +9,7 @@
 #include <expected>
 #include <functional>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <openai/openai.hpp>
 #include <string>
 #include <string_view>
@@ -168,7 +169,9 @@ class Agent {
     // --- Memória e Mensagens ---
     sqlite3_db_ptr brain_db;
     std::vector<Message> history; // Contexto atual em memória
-    size_t total_tokens = 0;      // Acumulado da sessão
+    nlohmann::json messages_cache =
+        nlohmann::json::array(); // Cache do array JSON para a LLM
+    size_t total_tokens = 0;     // Acumulado da sessão
 
     MessageRole current_role = MessageRole::User;
 
@@ -185,6 +188,8 @@ class Agent {
     std::unique_ptr<BrainStore> brain_store;
 
     // --- Métodos de Apoio ---
+    void
+    add_to_history(const Message &msg); // Adiciona ao history e ao cache JSON
     void persist_message(Message &msg); // Salva no SQLite, atualiza o ID
     void prune_context(); // Se o histórico ficar grande demais para o modelo
 };

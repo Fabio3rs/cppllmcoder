@@ -7,56 +7,23 @@
 #include "json_utils.hpp"
 #include "llm_chat_streamer.hpp"
 #include "time_utils.hpp"
+#include "uuid_utils.hpp"
 #include <nlohmann/json.hpp>
 #include <openai/openai.hpp>
-#include <random>
-#include <sstream>
 #include <utility>
 
 namespace {
-std::string generate_uuid_v4() {
-    std::random_device rd;
-    std::mt19937_64 gen(rd());
-    auto rand64 = [&]() { return gen(); };
-
-    auto to_hex = [](uint64_t value, size_t width) {
-        std::ostringstream oss;
-        oss << std::hex;
-        oss.width(static_cast<std::streamsize>(width));
-        oss.fill('0');
-        oss << value;
-        return oss.str();
-    };
-
-    // Build 128 bits
-    uint64_t high = rand64();
-    uint64_t low = rand64();
-
-    // Set version (4) and variant (10xx)
-    high &= 0xFFFFFFFFFFFF0FFFULL;
-    high |= 0x0000000000004000ULL;
-    low &= 0x3FFFFFFFFFFFFFFFULL;
-    low |= 0x8000000000000000ULL;
-
-    std::ostringstream uuid;
-    uuid << to_hex((high >> 32) & 0xFFFFFFFFULL, 8) << "-"
-         << to_hex((high >> 16) & 0xFFFFULL, 4) << "-"
-         << to_hex(high & 0xFFFFULL, 4) << "-"
-         << to_hex((low >> 48) & 0xFFFFULL, 4) << "-"
-         << to_hex(low & 0xFFFFFFFFFFFFULL, 12);
-    return uuid.str();
-}
-
 std::string build_params_json(const SessionInfo &s) {
-    std::ostringstream oss;
-    oss << "{" << "\"model\":\"" << json_utils::escapeJson(s.model) << "\","
-        << "\"model_version\":\"" << json_utils::escapeJson(s.model_version)
-        << "\"," << "\"endpoint\":\"" << json_utils::escapeJson(s.endpoint)
-        << "\"," << "\"temperature\":" << s.temperature << ","
-        << "\"top_p\":" << s.top_p << "," << "\"top_k\":" << s.top_k << ","
-        << "\"max_tokens\":" << s.max_tokens << "," << "\"seed\":" << s.seed
-        << "}";
-    return oss.str();
+    nlohmann::json j;
+    j["model"] = s.model;
+    j["model_version"] = s.model_version;
+    j["endpoint"] = s.endpoint;
+    j["temperature"] = s.temperature;
+    j["top_p"] = s.top_p;
+    j["top_k"] = s.top_k;
+    j["max_tokens"] = s.max_tokens;
+    j["seed"] = s.seed;
+    return j.dump();
 }
 } // namespace
 
@@ -71,7 +38,7 @@ Agent::Agent(const app::Options &opts, std::shared_ptr<ToolRegistry> tools,
       execution_logger(std::move(logger)), stats_recorder(std::move(stats)),
       done_task_signal(std::move(done)) {
     session_info.id = options.session_id_override.empty()
-                          ? generate_uuid_v4()
+                          ? utils::generate_uuid_v4()
                           : options.session_id_override;
     session_info.model = options.model;
     session_info.model_version = options.model_version;
@@ -160,6 +127,7 @@ Agent::Agent(const app::Options &opts, std::shared_ptr<ToolRegistry> tools,
                 execution_logger->logToolEvent(ctx, decision, duration, success,
                                                summary, session_info);
             }
+
             return result;
         };
         luaContext.bindTools(*tool_registry, toolInvocationHandler);
@@ -191,8 +159,7 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
                            .updated_at = to_iso8601_ms(now),
                            .duration = std::chrono::milliseconds{0},
                            .token_count = 0};
-        history.push_back(system_msg);
-        persist_message(history.back());
+        add_to_history(system_msg);
     }
 
     Message user_msg{.id = 0,
@@ -203,36 +170,23 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
                      .updated_at = to_iso8601_ms(now),
                      .duration = std::chrono::milliseconds{0},
                      .token_count = 0};
-    history.push_back(user_msg);
-    persist_message(history.back());
+    add_to_history(user_msg);
 
     if (done_task_signal) {
         done_task_signal->reset();
     }
 
     std::string full_reply;
+    int iterations = 0;
 
-    while (true) {
+    while (iterations < options.max_iterations) {
+        iterations++;
+
+        prune_context(); // Placeholder for context compression/sliding window
+
         nlohmann::json req;
         req["model"] = options.model;
-        req["messages"] = nlohmann::json::array();
-        for (const auto &msg : history) {
-
-            if (!options.supports_tool_role && msg.role == MessageRole::Tool) {
-                // OpenAI API don't suppport standalone tool role, so we can
-                // either skip these messages or convert them to "user"
-                // role. Here, we'll convert to "user" to preserve the
-                // information in the prompt.
-                auto content = std::format(
-                    "<|tool_response|>{}</|tool_response|>", msg.content);
-                req["messages"].push_back(
-                    {{"role", "user"}, {"content", content}});
-            } else {
-                auto role = msg.role_to_string();
-                req["messages"].push_back(
-                    {{"role", role}, {"content", msg.content}});
-            }
-        }
+        req["messages"] = messages_cache;
         req["stream"] = true;
         req["stream_options"] = {{"include_usage", true}};
 
@@ -256,8 +210,7 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
             .updated_at = to_iso8601_ms(now_after),
             .duration = duration,
             .token_count = usage.total_tokens >= 0 ? usage.total_tokens : 0};
-        history.push_back(assistant_msg);
-        persist_message(history.back());
+        add_to_history(assistant_msg);
 
         if (stats_recorder && usage.total_tokens >= 0) {
             stats_recorder->incrementTokenCount(usage.total_tokens);
@@ -324,17 +277,10 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
                              .updated_at = to_iso8601_ms(now_tool),
                              .duration = lua_duration,
                              .token_count = 0};
-            history.push_back(tool_msg);
-            persist_message(history.back());
+            add_to_history(tool_msg);
         }
 
         if (done_task_signal && done_task_signal->consume()) {
-            break;
-        }
-
-        if (!done_task_signal) {
-            // If no done_task_signal is present, we can't know if the task is
-            // done.
             break;
         }
     }
@@ -372,4 +318,23 @@ void Agent::persist_message(Message &msg) {
     }
 }
 
-void Agent::prune_context() {}
+void Agent::add_to_history(const Message &msg) {
+    history.push_back(msg);
+    persist_message(history.back()); // Updates the ID in history.back()
+
+    // Update JSON cache using the now-updated message
+    const auto &msg_ref = history.back();
+    if (!options.supports_tool_role && msg_ref.role == MessageRole::Tool) {
+        auto content = std::format("<|tool_response|>{}</|tool_response|>",
+                                   msg_ref.content);
+        messages_cache.push_back({{"role", "user"}, {"content", content}});
+    } else {
+        messages_cache.push_back(
+            {{"role", msg_ref.role_to_string()}, {"content", msg_ref.content}});
+    }
+}
+
+void Agent::prune_context() {
+    // When implementing pruning, remember to:
+    // messages_cache.erase(messages_cache.begin(), messages_cache.begin() + N);
+}
