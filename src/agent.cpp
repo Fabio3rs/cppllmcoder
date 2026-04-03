@@ -13,6 +13,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <openai/openai.hpp>
+#include <string_view>
 #include <utility>
 
 #if defined(_WIN32)
@@ -412,4 +413,9 @@ void Agent::add_to_history(Message msg) {
 void Agent::prune_context() {
     // When implementing pruning, remember to:
     // messages_cache.erase(messages_cache.begin(), messages_cache.begin() + N);
+
+    [[maybe_unused]] constexpr std::string_view prompt_for_compression =
+        R"md(### Context compression instructions
+            ....
+)md";
 }
