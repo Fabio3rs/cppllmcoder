@@ -2,11 +2,13 @@
 
 #include "agent.hpp"
 #include "done_task_tool.hpp"
+#include "lua_args.hpp"
 #include "options.hpp"
 #include "tool_registry.hpp"
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <expected>
 #include <filesystem>
 #include <fstream>
@@ -90,6 +92,10 @@ class FsSizeTool final : public ITool, private FsToolBase {
     FsSizeTool(std::string root, size_t max_read_bytes)
         : FsToolBase(std::move(root), max_read_bytes) {}
 
+    struct Args {
+        std::string path;
+    };
+
     ToolMetadata describe() const override {
         return ToolMetadata{
             .name = "fs.size",
@@ -103,21 +109,14 @@ class FsSizeTool final : public ITool, private FsToolBase {
     }
 
     std::expected<sol::object, std::string>
-    invoke(const sol::object &lua_args) const override {
-        sol::state_view lua(lua_args.lua_state());
-        std::string path;
-        if (lua_args.is<std::string>()) {
-            path = lua_args.as<std::string>();
-        } else if (lua_args.is<sol::table>()) {
-            sol::table tbl = lua_args.as<sol::table>();
-            path = tbl.get_or<std::string>("path", "");
-        } else {
-            return std::unexpected("expected string or table argument");
+    invoke(sol::variadic_args va, sol::this_state s) const override {
+        sol::state_view lua(s);
+        auto args = parse_pos_or_table<Args>(
+            va, FieldSpec{0, "path", &Args::path, std::string{}, true});
+        if (!args) {
+            return std::unexpected(args.error());
         }
-
-        if (path.empty()) {
-            return std::unexpected("path is required");
-        }
+        const std::string &path = args->path;
 
         auto resolved = resolve_inside_root(path);
         if (!resolved) {
@@ -146,6 +145,12 @@ class FsReadTool final : public ITool, private FsToolBase {
     FsReadTool(std::string root, size_t max_read_bytes)
         : FsToolBase(std::move(root), max_read_bytes) {}
 
+    struct Args {
+        std::string path;
+        int64_t offset = 0;
+        size_t max_bytes = 4096;
+    };
+
     ToolMetadata describe() const override {
         return ToolMetadata{
             .name = "fs.read",
@@ -155,8 +160,7 @@ class FsReadTool final : public ITool, private FsToolBase {
                           {"max_bytes",
                            "Maximum bytes to read (will be capped)", "int",
                            false}},
-            .usage_example =
-                "tools.fs.read({path='file.txt', offset=0, max_bytes=512})",
+            .usage_example = "tools.fs.read('file.txt', 0, 512)",
             .returns = "table {data, bytes_read, eof}",
             .danger_tags = {},
             .is_sensitive = false,
@@ -164,35 +168,26 @@ class FsReadTool final : public ITool, private FsToolBase {
     }
 
     std::expected<sol::object, std::string>
-    invoke(const sol::object &lua_args) const override {
-        sol::state_view lua(lua_args.lua_state());
-        std::string path;
-        int64_t offset = 0;
-        size_t max_bytes_req = 4096;
-
-        if (lua_args.is<std::string>()) {
-            path = lua_args.as<std::string>();
-        } else if (lua_args.is<sol::table>()) {
-            sol::table tbl = lua_args.as<sol::table>();
-            path = tbl.get_or<std::string>("path", "");
-            offset = tbl.get<sol::optional<int64_t>>("offset").value_or(0);
-            if (auto mb = tbl.get<sol::optional<int64_t>>("max_bytes")) {
-                if (*mb > 0) {
-                    max_bytes_req = static_cast<size_t>(*mb);
-                }
-            }
-        } else {
-            return std::unexpected("expected string or table argument");
+    invoke(sol::variadic_args va, sol::this_state s) const override {
+        sol::state_view lua(s);
+        auto parsed = parse_pos_or_table<Args>(
+            va, FieldSpec{0, "path", &Args::path, std::string{}, true},
+            FieldSpec{1, "offset", &Args::offset, static_cast<int64_t>(0),
+                      false},
+            FieldSpec{2, "max_bytes", &Args::max_bytes,
+                      static_cast<size_t>(4096), false});
+        if (!parsed) {
+            return std::unexpected(parsed.error());
         }
-
-        if (path.empty()) {
+        const auto &args = *parsed;
+        if (args.path.empty()) {
             return std::unexpected("path is required");
         }
-        if (offset < 0) {
+        if (args.offset < 0) {
             return std::unexpected("offset must be non-negative");
         }
 
-        auto resolved = resolve_inside_root(path);
+        auto resolved = resolve_inside_root(args.path);
         if (!resolved) {
             return std::unexpected(resolved.error());
         }
@@ -209,11 +204,12 @@ class FsReadTool final : public ITool, private FsToolBase {
         if (ec) {
             return std::unexpected("failed to get file size: " + ec.message());
         }
-        if (static_cast<uint64_t>(offset) > file_size) {
+        if (static_cast<uint64_t>(args.offset) > file_size) {
             return std::unexpected("offset beyond end of file");
         }
 
-        const size_t to_read = std::min(max_bytes_req, max_read_bytes_);
+        const size_t to_read =
+            std::min(static_cast<size_t>(args.max_bytes), max_read_bytes_);
         std::string buffer;
         buffer.resize(to_read);
 
@@ -221,7 +217,7 @@ class FsReadTool final : public ITool, private FsToolBase {
         if (!ifs) {
             return std::unexpected("failed to open file");
         }
-        ifs.seekg(offset, std::ios::beg);
+        ifs.seekg(args.offset, std::ios::beg);
         if (!ifs) {
             return std::unexpected("failed to seek");
         }
@@ -230,7 +226,7 @@ class FsReadTool final : public ITool, private FsToolBase {
         buffer.resize(read_count);
 
         const bool eof =
-            (static_cast<uint64_t>(offset) + read_count) >= file_size;
+            (static_cast<uint64_t>(args.offset) + read_count) >= file_size;
 
         sol::table out = lua.create_table();
         out["data"] = buffer;
@@ -280,6 +276,14 @@ class FsListTool final : public ITool, private FsToolBase {
     FsListTool(std::string root, size_t max_read_bytes)
         : FsToolBase(std::move(root), max_read_bytes) {}
 
+    struct Args {
+        std::string dir{"."};
+        int depth{1};
+        bool include_files{true};
+        bool include_dirs{true};
+        bool include_symlinks{false};
+    };
+
     ToolMetadata describe() const override {
         return ToolMetadata{
             .name = "fs.ls",
@@ -291,8 +295,7 @@ class FsListTool final : public ITool, private FsToolBase {
                           {"include_dirs", "Include dirs", "bool", false},
                           {"include_symlinks", "Include symlinks", "bool",
                            false}},
-            .usage_example =
-                "tools.fs.ls({dir='.', depth=1, include_files=true})",
+            .usage_example = "tools.fs.ls('.', 1, true, true)",
             .returns = "array of tables (fields: name, kind, size, mtime, "
                        "relpath) with metatable methods is_dir/is_file/"
                        "is_symlink/type() and tostring()->name, sorted",
@@ -302,36 +305,26 @@ class FsListTool final : public ITool, private FsToolBase {
     }
 
     std::expected<sol::object, std::string>
-    invoke(const sol::object &lua_args) const override {
-        sol::state_view lua(lua_args.lua_state());
+    invoke(sol::variadic_args va, sol::this_state s) const override {
+        sol::state_view lua(s);
         sol::table direntry_meta = ensureDirEntryMetatable(lua);
-        std::string dir = ".";
-        int depth = 1;
-        bool include_files = true;
-        bool include_dirs = true;
-        bool include_symlinks = false;
-
-        if (lua_args.is<std::string>()) {
-            dir = lua_args.as<std::string>();
-        } else if (lua_args.is<sol::table>()) {
-            sol::table tbl = lua_args.as<sol::table>();
-            dir = tbl.get_or<std::string>("dir", ".");
-            depth = tbl.get<sol::optional<int>>("depth").value_or(1);
-            include_files =
-                tbl.get<sol::optional<bool>>("include_files").value_or(true);
-            include_dirs =
-                tbl.get<sol::optional<bool>>("include_dirs").value_or(true);
-            include_symlinks = tbl.get<sol::optional<bool>>("include_symlinks")
-                                   .value_or(false);
-        } else if (!lua_args.is<sol::nil_t>()) {
-            return std::unexpected("expected string, table or nil argument");
+        auto parsed = parse_pos_or_table<Args>(
+            va, FieldSpec{0, "dir", &Args::dir, std::string{"."}, false},
+            FieldSpec{1, "depth", &Args::depth, 1, false},
+            FieldSpec{2, "include_files", &Args::include_files, true, false},
+            FieldSpec{3, "include_dirs", &Args::include_dirs, true, false},
+            FieldSpec{4, "include_symlinks", &Args::include_symlinks, false,
+                      false});
+        if (!parsed) {
+            return std::unexpected(parsed.error());
         }
+        const auto &args = *parsed;
 
-        if (depth < 0) {
+        if (args.depth < 0) {
             return std::unexpected("depth must be non-negative");
         }
 
-        auto resolved = resolve_inside_root(dir);
+        auto resolved = resolve_inside_root(args.dir);
         if (!resolved) {
             return std::unexpected(resolved.error());
         }
@@ -355,7 +348,7 @@ class FsListTool final : public ITool, private FsToolBase {
                 return std::unexpected("iteration error: " + iter_ec.message());
             }
             const int current_depth = it.depth();
-            if (current_depth >= depth) {
+            if (current_depth >= args.depth) {
                 it.disable_recursion_pending();
                 continue;
             }
@@ -367,15 +360,15 @@ class FsListTool final : public ITool, private FsToolBase {
             }
             const auto kind = st.type();
             if (kind == fs::file_type::directory) {
-                if (!include_dirs)
+                if (!args.include_dirs)
                     continue;
                 row.kind = "dir";
             } else if (kind == fs::file_type::regular) {
-                if (!include_files)
+                if (!args.include_files)
                     continue;
                 row.kind = "file";
             } else if (kind == fs::file_type::symlink) {
-                if (!include_symlinks)
+                if (!args.include_symlinks)
                     continue;
                 row.kind = "symlink";
             } else {

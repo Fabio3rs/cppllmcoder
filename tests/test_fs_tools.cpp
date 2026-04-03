@@ -51,6 +51,21 @@ TEST(FsTools, LsBasicDepth) {
     fs::remove_all(root);
 }
 
+TEST(FsTools, LsPositionalCall) {
+    const auto root = make_temp_tree();
+    auto reg = std::make_shared<DefaultToolRegistry>();
+    registerFilesystemTools(*reg, root.string(), 8192);
+    LuaContext lua;
+    lua.bindTools(*reg);
+
+    const auto j = exec_json(lua, "return tools.fs.ls('.', 1, true, true)");
+    ASSERT_EQ(j.size(), 2u);
+    EXPECT_EQ(j[0]["name"], "a.txt");
+    EXPECT_EQ(j[1]["name"], "sub");
+
+    fs::remove_all(root);
+}
+
 TEST(FsTools, SizeAndRead) {
     const auto root = make_temp_tree();
     auto reg = std::make_shared<DefaultToolRegistry>();

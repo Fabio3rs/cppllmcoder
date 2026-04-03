@@ -82,7 +82,7 @@ class ITool {
     virtual ToolMetadata describe() const = 0;
 
     virtual std::expected<sol::object, std::string>
-    invoke(const sol::object &lua_args) const = 0;
+    invoke(sol::variadic_args args, sol::this_state s) const = 0;
 };
 
 class ToolRegistry {

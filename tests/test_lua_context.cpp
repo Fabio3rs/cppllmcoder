@@ -19,12 +19,15 @@ class EchoTool : public ITool {
     }
 
     std::expected<sol::object, std::string>
-    invoke(const sol::object &lua_args) const override {
-        if (lua_args.is<sol::table>()) {
-            sol::table tbl = lua_args;
+    invoke(sol::variadic_args va, sol::this_state s) const override {
+        sol::state_view lua(s);
+        if (va.size() == 1 && va[0].is<sol::table>()) {
+            sol::table tbl = va[0];
             if (tbl["msg"].valid()) {
                 return tbl["msg"].get<sol::object>();
             }
+        } else if (va.size() >= 1 && va[0].is<std::string>()) {
+            return sol::make_object(lua, va[0].as<std::string>());
         }
         return std::unexpected("missing msg");
     }
@@ -46,6 +49,22 @@ TEST(LuaContextBinding, CallsRegisteredTool) {
     EXPECT_EQ(*res, "hello");
 }
 
+TEST(LuaContextBinding, CallsRegisteredToolPositional) {
+    DefaultToolRegistry reg;
+    reg.registerTool(std::make_shared<EchoTool>());
+
+    LuaContext lua;
+    lua.bindTools(reg);
+
+    const auto res = lua.execute(R"lua(
+        local out = tools.echo("hi-positional")
+        return out
+    )lua");
+
+    ASSERT_TRUE(res.has_value());
+    EXPECT_EQ(*res, "hi-positional");
+}
+
 TEST(LuaContextBinding, ToolErrorPropagatesAsString) {
     class FailingTool : public ITool {
       public:
@@ -62,7 +81,7 @@ TEST(LuaContextBinding, ToolErrorPropagatesAsString) {
             };
         }
         std::expected<sol::object, std::string>
-        invoke(const sol::object &) const override {
+        invoke(sol::variadic_args, sol::this_state) const override {
             return std::unexpected("boom");
         }
     };
@@ -87,9 +106,8 @@ TEST(LuaContextBinding, InvokerCanDenyCall) {
 
     LuaContext lua;
     lua.bindTools(reg,
-                  [](const ToolMetadata &, const ITool &, const sol::object &) {
-                      return std::unexpected("denied");
-                  });
+                  [](const ToolMetadata &, const ITool &, sol::variadic_args,
+                     sol::this_state) { return std::unexpected("denied"); });
 
     const auto res = lua.execute(R"lua(
         return tools.echo({ msg = "hello" })
@@ -113,7 +131,7 @@ TEST(LuaContextBinding, ToolThrowIsCaught) {
                     .always_show_in_prompt = false};
         }
         std::expected<sol::object, std::string>
-        invoke(const sol::object &) const override {
+        invoke(sol::variadic_args, sol::this_state) const override {
             throw std::runtime_error("kaboom");
         }
     };

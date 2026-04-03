@@ -89,9 +89,7 @@ class NullToolRegistry : public ToolRegistry {
 
 class NullPromptManager : public IPromptManager {
   public:
-    std::string
-    buildSystemPrompt(const std::vector<Message> &,
-                      const std::vector<ToolDocView> &) const override {
+    std::string buildSystemPrompt(const Agent & /*agent*/) const override {
         return {};
     }
     std::string

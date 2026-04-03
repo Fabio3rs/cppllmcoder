@@ -20,8 +20,9 @@ class DummyTool : public ITool {
     }
 
     std::expected<sol::object, std::string>
-    invoke(const sol::object &args) const override {
-        sol::state_view lua(args.lua_state());
+    invoke(sol::variadic_args va, sol::this_state s) const override {
+        sol::state_view lua(s);
+        (void)va;
         return sol::make_object(lua, "ok");
     }
 

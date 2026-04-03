@@ -24,12 +24,11 @@ class DoneTaskTool final : public ITool {
     }
 
     std::expected<sol::object, std::string>
-    invoke(const sol::object &lua_args) const override {
-        (void)lua_args;
+    invoke(sol::variadic_args, sol::this_state s) const override {
         if (signal_) {
             signal_->mark_done();
         }
-        sol::state_view lua(lua_args.lua_state());
+        sol::state_view lua(s);
         return sol::make_object(lua, std::string("task marked as done"));
     }
 

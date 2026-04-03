@@ -45,6 +45,12 @@ class Agent {
     std::shared_ptr<IToolConsentProvider> get_consent_provider() const;
     const SessionInfo &get_session_info() const;
 
+    const app::Options &get_options() const noexcept { return options; }
+
+    app::Options &get_options() noexcept { return options; }
+
+    LuaContext &get_lua_context() noexcept { return luaContext; }
+
   private:
     // --- Memória e Mensagens ---
     sqlite3_db_ptr brain_db;

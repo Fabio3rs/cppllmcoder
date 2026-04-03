@@ -33,21 +33,22 @@ void LuaContext::setup_sandbox() {
 void LuaContext::bindTools(
     const ToolRegistry &registry,
     std::function<std::expected<sol::object, std::string>(
-        const ToolMetadata &, const ITool &, const sol::object &)>
+        const ToolMetadata &, const ITool &, sol::variadic_args,
+        sol::this_state)>
         invoker) {
     auto tools_tbl = lua.create_named_table("tools");
 
     auto toolInvoker = [&tools_tbl, invoker, this](const ToolMetadata &meta,
                                                    const ITool &tool) {
-        auto bound_fn = [&tool, meta, invoker](sol::object args,
+        auto bound_fn = [&tool, meta, invoker](sol::variadic_args va,
                                                sol::this_state s) {
             const std::string prefix = "error: tool invocation failed - ";
             try {
                 std::expected<sol::object, std::string> result;
                 if (invoker) {
-                    result = invoker(meta, tool, args);
+                    result = invoker(meta, tool, va, s);
                 } else {
-                    result = tool.invoke(args);
+                    result = tool.invoke(va, s);
                 }
                 if (result) {
                     return *result;
@@ -294,6 +295,18 @@ LuaContext::luaObjectToJson(const sol::object &obj) {
     };
 
     return serialize(obj, 0);
+}
+
+std::expected<std::string, std::string>
+LuaContext::luaVariadicToJson(sol::variadic_args va, sol::this_state s) {
+    sol::state_view lua(s);
+    sol::table arr = lua.create_table(static_cast<int>(va.size()), 0);
+    int idx = 1;
+    for (auto v : va) {
+        arr[idx++] = v;
+    }
+    sol::object as_obj = arr;
+    return luaObjectToJson(as_obj);
 }
 
 // escape_json moved to json_utils.hpp

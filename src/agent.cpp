@@ -55,13 +55,14 @@ Agent::Agent(const app::Options &opts, std::shared_ptr<ToolRegistry> tools,
     brain_store->ensureSession(session_info);
 
     if (tool_registry) {
-        auto toolInvocationHandler = [this](const ToolMetadata &meta,
-                                            const ITool &tool,
-                                            const sol::object &lua_args)
-            -> std::expected<sol::object, std::string> {
+        auto toolInvocationHandler =
+            [this](
+                const ToolMetadata &meta, const ITool &tool,
+                sol::variadic_args va,
+                sol::this_state s) -> std::expected<sol::object, std::string> {
             // Opcional: geramos uma prévia em JSON só para consent/log.
-            auto preview = LuaContext::luaObjectToJson(lua_args).value_or(
-                std::string{"<lua-object>"});
+            auto preview = LuaContext::luaVariadicToJson(va, s).value_or(
+                std::string{"<lua-args>"});
             ToolInvocationContext ctx{meta, std::move(preview), 0,
                                       std::chrono::milliseconds{0},
                                       session_info};
@@ -83,7 +84,7 @@ Agent::Agent(const app::Options &opts, std::shared_ptr<ToolRegistry> tools,
                     "argument modification not supported with lua args");
             }
             const auto start = std::chrono::steady_clock::now();
-            auto result = tool.invoke(lua_args);
+            auto result = tool.invoke(va, s);
             const auto end = std::chrono::steady_clock::now();
             const auto duration =
                 std::chrono::duration_cast<std::chrono::milliseconds>(end -
@@ -149,7 +150,7 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
         // System prompt é o primeiro
         auto tools = tool_registry->topKDocs("", 16);
 
-        auto system_prompt = prompt_manager->buildSystemPrompt(history, tools);
+        auto system_prompt = prompt_manager->buildSystemPrompt(*this);
 
         Message system_msg{.id = 0,
                            .role = MessageRole::System,
@@ -325,8 +326,8 @@ void Agent::add_to_history(const Message &msg) {
     // Update JSON cache using the now-updated message
     const auto &msg_ref = history.back();
     if (!options.supports_tool_role && msg_ref.role == MessageRole::Tool) {
-        auto content = std::format("<|tool_response|>{}</|tool_response|>",
-                                   msg_ref.content);
+        auto content = std::format("{}\n{}\n{}", TOOL_RESPONSE_TAG_OPEN,
+                                   msg_ref.content, TOOL_RESPONSE_TAG_CLOSE);
         messages_cache.push_back({{"role", "user"}, {"content", content}});
     } else {
         messages_cache.push_back(
