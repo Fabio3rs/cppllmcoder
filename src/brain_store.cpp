@@ -142,6 +142,55 @@ void BrainStore::ensureTool(const ToolMetadata &meta) {
 }
 
 void BrainStore::insertMessage(Message &msg) {
+    if (msg.id > 0) {
+        // If the row already exists, perform an update to avoid duplicates.
+        if (!stmt_check_message_.has_value()) {
+            stmt_check_message_.emplace(
+                db_.prepare("SELECT 1 FROM messages WHERE id = ? LIMIT 1;",
+                            "check message exists"));
+        }
+        auto &check = *stmt_check_message_;
+        check.clear();
+        check.reset();
+        check.bind(1, msg.id);
+        const bool exists = (check.step() == SQLITE_ROW);
+        check.reset();
+        check.clear();
+
+        if (exists) {
+            if (!stmt_update_message_.has_value()) {
+                stmt_update_message_.emplace(db_.prepare(
+                    R"sql(
+                    UPDATE messages
+                    SET task_id = ?,
+                        session_id = ?,
+                        role = ?,
+                        content = ?,
+                        token_count = ?,
+                        duration_ms = ?,
+                        updated_at = ?
+                    WHERE id = ?;
+                )sql",
+                    "update messages"));
+            }
+            auto &upd = *stmt_update_message_;
+            upd.clear();
+            upd.reset();
+            upd.bind(1, null_if_empty("")) // placeholder task_id
+                .bind(2, msg.session_id)
+                .bind(3, msg.role_to_string())
+                .bind(4, msg.content)
+                .bind(5, static_cast<int>(msg.token_count))
+                .bind(6, static_cast<int64_t>(msg.duration.count()))
+                .bind(7, msg.updated_at)
+                .bind(8, msg.id);
+            upd.step();
+            upd.reset();
+            upd.clear();
+            return;
+        }
+    }
+
     insertMessage(static_cast<const Message &>(msg));
     // Update msg.id with last inserted ID
     msg.id = db_.lastInsertRowId();

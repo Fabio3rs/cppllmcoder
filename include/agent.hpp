@@ -183,7 +183,6 @@ class Agent {
     std::unique_ptr<BrainStore> brain_store;
 
     // --- Métodos de Apoio ---
-    void persist_message(const Message &msg); // Salva no SQLite
-    void persist_message(Message &msg);       // Salva no SQLite, atualiza o ID
+    void persist_message(Message &msg); // Salva no SQLite, atualiza o ID
     void prune_context(); // Se o histórico ficar grande demais para o modelo
 };

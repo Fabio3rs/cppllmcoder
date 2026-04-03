@@ -46,6 +46,8 @@ class BrainStore {
     mutable std::optional<SqliteStatement> stmt_insert_tool_;
     mutable std::optional<SqliteStatement> stmt_insert_session_;
     mutable std::optional<SqliteStatement> stmt_insert_message_;
+    mutable std::optional<SqliteStatement> stmt_update_message_;
+    mutable std::optional<SqliteStatement> stmt_check_message_;
     mutable std::optional<SqliteStatement> stmt_insert_tool_invocation_;
     mutable std::optional<SqliteStatement> stmt_insert_execution_log_;
     mutable std::optional<SqliteStatement> stmt_insert_prompt_log_;
