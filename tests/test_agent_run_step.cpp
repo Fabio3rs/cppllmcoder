@@ -1,11 +1,8 @@
 #include <gtest/gtest.h>
 
 #include "agent.hpp"
-#include "agents/agent_action.hpp"
-#include "brain_store.hpp"
 #include "llm_chat_streamer.hpp"
 #include "mock_openai_server.hpp"
-#include "time_utils.hpp"
 
 #include <atomic>
 #include <nlohmann/json.hpp>
