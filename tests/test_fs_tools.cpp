@@ -66,6 +66,23 @@ TEST(FsTools, LsPositionalCall) {
     fs::remove_all(root);
 }
 
+TEST(FsTools, LsGlobalTableFs) {
+    const auto root = make_temp_tree();
+    auto reg = std::make_shared<DefaultToolRegistry>();
+    registerFilesystemTools(*reg, root.string(), 8192);
+    LuaContext lua;
+    lua.bindTools(*reg);
+
+    auto res = lua.execute("return fs.ls('.', 1, true, true)");
+    ASSERT_TRUE(res.has_value()) << res.error();
+    auto j = json::parse(*res);
+    ASSERT_EQ(j.size(), 2u);
+    EXPECT_EQ(j[0]["name"], "a.txt");
+    EXPECT_EQ(j[1]["name"], "sub");
+
+    fs::remove_all(root);
+}
+
 TEST(FsTools, SizeAndRead) {
     const auto root = make_temp_tree();
     auto reg = std::make_shared<DefaultToolRegistry>();
@@ -121,6 +138,58 @@ TEST(FsTools, SymlinkListedButNotFollowed) {
         }
     }
     EXPECT_TRUE(saw_symlink);
+
+    fs::remove_all(root);
+}
+
+TEST(FsTools, LsWithCustomInvokerForwardsArgs) {
+    const auto root = make_temp_tree();
+    auto reg = std::make_shared<DefaultToolRegistry>();
+    registerFilesystemTools(*reg, root.string(), 8192);
+
+    LuaContext lua;
+    auto forwarding_invoker =
+        [](const ToolMetadata &meta, const ITool &tool, sol::variadic_args va,
+           sol::this_state s) -> std::expected<sol::object, std::string> {
+        (void)meta;
+        return tool.invoke(va, s);
+    };
+    lua.bindTools(*reg, forwarding_invoker);
+
+    auto res = lua.execute("return fs.ls('.', 1, true, true)");
+    ASSERT_TRUE(res.has_value()) << res.error();
+    auto j = json::parse(*res);
+    ASSERT_EQ(j.size(), 2u);
+    EXPECT_EQ(j[0]["name"], "a.txt");
+    EXPECT_EQ(j[1]["name"], "sub");
+
+    fs::remove_all(root);
+}
+
+TEST(FsTools, LsWithInvokerThatBuildsPreview) {
+    const auto root = make_temp_tree();
+    auto reg = std::make_shared<DefaultToolRegistry>();
+    registerFilesystemTools(*reg, root.string(), 8192);
+
+    LuaContext lua;
+    auto invoker =
+        [](const ToolMetadata &meta, const ITool &tool, sol::variadic_args va,
+           sol::this_state s) -> std::expected<sol::object, std::string> {
+        (void)meta;
+        // Mimic Agent's preview step (stack must remain balanced)
+        auto preview = LuaContext::luaVariadicToJson(va, s);
+        EXPECT_TRUE(preview.has_value()) << preview.error();
+        EXPECT_FALSE(preview->empty());
+        return tool.invoke(va, s);
+    };
+    lua.bindTools(*reg, invoker);
+
+    auto res = lua.execute("return fs.ls('.', 1, true, true)");
+    ASSERT_TRUE(res.has_value()) << res.error();
+    auto j = json::parse(*res);
+    ASSERT_EQ(j.size(), 2u);
+    EXPECT_EQ(j[0]["name"], "a.txt");
+    EXPECT_EQ(j[1]["name"], "sub");
 
     fs::remove_all(root);
 }

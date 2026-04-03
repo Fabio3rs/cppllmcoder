@@ -8,20 +8,39 @@
 #include "llm_chat_streamer.hpp"
 #include "time_utils.hpp"
 #include "uuid_utils.hpp"
+#include <cctype>
+#include <cstdio>
+#include <iostream>
 #include <nlohmann/json.hpp>
 #include <openai/openai.hpp>
 #include <utility>
+
+#if defined(_WIN32)
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace {
 std::string build_params_json(const SessionInfo &s) {
     nlohmann::json j;
     j["model"] = s.model;
-    j["model_version"] = s.model_version;
+
+    if (!s.model_version.empty()) {
+        j["model_version"] = s.model_version;
+    }
+
     j["endpoint"] = s.endpoint;
     j["temperature"] = s.temperature;
     j["top_p"] = s.top_p;
-    j["top_k"] = s.top_k;
-    j["max_tokens"] = s.max_tokens;
+
+    if (s.top_k > 0) {
+        j["top_k"] = s.top_k;
+    }
+
+    if (s.max_tokens > 0) {
+        j["max_tokens"] = s.max_tokens;
+    }
     j["seed"] = s.seed;
     return j.dump();
 }
@@ -179,8 +198,46 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
 
     std::string full_reply;
     int iterations = 0;
+    int idle_turns = 0;
 
-    while (iterations < options.max_iterations) {
+    const auto timeout = driver.timeout();
+    const auto deadline =
+        timeout ? std::optional<
+                      std::chrono::steady_clock::time_point>{now_steady() +
+                                                             *timeout}
+                : std::nullopt;
+
+    while (true) {
+        if (driver.stop_requested()) {
+            break;
+        }
+
+        if (deadline && now_steady() > *deadline) {
+            break;
+        }
+
+        if (!options.auto_approve && iterations >= options.max_iterations) {
+            break;
+        }
+
+        if (driver.should_finish(idle_turns)) {
+            break;
+        }
+
+        // Processa injeções pendentes vindas da TUI (soft stop).
+        while (auto injection = driver.next_injection()) {
+            const auto now_injection = now_system();
+            Message injected_msg{.id = 0,
+                                 .role = MessageRole::User,
+                                 .content = std::move(*injection),
+                                 .session_id = session_info.id,
+                                 .created_at = to_iso8601_ms(now_injection),
+                                 .updated_at = to_iso8601_ms(now_injection),
+                                 .duration = std::chrono::milliseconds{0},
+                                 .token_count = 0};
+            add_to_history(injected_msg);
+        }
+
         iterations++;
 
         prune_context(); // Placeholder for context compression/sliding window
@@ -220,8 +277,10 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
         AgentAction action = AgentAction::parse(reply);
 
         if (!action.has_code) {
+            idle_turns++;
             break;
         }
+        idle_turns = 0;
 
         {
             const auto lua_start = now_steady();
@@ -319,19 +378,34 @@ void Agent::persist_message(Message &msg) {
     }
 }
 
-void Agent::add_to_history(const Message &msg) {
-    history.push_back(msg);
+void Agent::add_to_history(Message msg) {
+    history.emplace_back(std::move(msg));
     persist_message(history.back()); // Updates the ID in history.back()
+
+    std::string add_id;
 
     // Update JSON cache using the now-updated message
     const auto &msg_ref = history.back();
+    if (msg_ref.id != 0) {
+        /**
+         * Add the message ID to the response
+         * This allows the user to reference the specific message in follow-up
+         * queries. Also, it helps in tracking the conversation history more
+         * effectively.
+         */
+        add_id = std::format("\n<id>{}</id>\n", msg_ref.id);
+    }
+
     if (!options.supports_tool_role && msg_ref.role == MessageRole::Tool) {
-        auto content = std::format("{}\n{}\n{}", TOOL_RESPONSE_TAG_OPEN,
-                                   msg_ref.content, TOOL_RESPONSE_TAG_CLOSE);
+        auto content =
+            std::format("{}\n{}\n{}{}", TOOL_RESPONSE_TAG_OPEN, msg_ref.content,
+                        TOOL_RESPONSE_TAG_CLOSE, add_id);
         messages_cache.push_back({{"role", "user"}, {"content", content}});
     } else {
         messages_cache.push_back(
-            {{"role", msg_ref.role_to_string()}, {"content", msg_ref.content}});
+            {{"role", msg_ref.role_to_string()},
+             {"content",
+              (add_id.empty() ? msg_ref.content : msg_ref.content + add_id)}});
     }
 }
 

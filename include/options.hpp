@@ -7,7 +7,7 @@ struct Options {
     bool verbose = false;
     bool version = false;
     bool auto_approve = false;
-    int max_iterations = 10;
+    int max_iterations = 100;
     std::string db_path = ".cppllmcoder/brain.db";
     std::string workdir = ".";
     std::string model = "qwen2.5-coder:7b";
@@ -16,7 +16,7 @@ struct Options {
     double temperature = 0.7;
     double top_p = 0.95;
     int top_k = 0; // 0 deve desabilitar
-    int max_tokens = 2048;
+    int max_tokens = 0;
     int seed = -1;                   // -1 indica aleatório
     std::string session_id_override; // Permite replays ou uso determinístico
     bool supports_tool_role = true;  // False se usar OpenAI porque eles exigem

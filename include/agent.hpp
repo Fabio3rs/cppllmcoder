@@ -73,8 +73,7 @@ class Agent {
     std::unique_ptr<BrainStore> brain_store;
 
     // --- Métodos de Apoio ---
-    void
-    add_to_history(const Message &msg); // Adiciona ao history e ao cache JSON
+    void add_to_history(Message msg);   // Adiciona ao history e ao cache JSON
     void persist_message(Message &msg); // Salva no SQLite, atualiza o ID
     void prune_context(); // Se o histórico ficar grande demais para o modelo
 };

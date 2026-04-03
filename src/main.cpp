@@ -221,16 +221,6 @@ int main() {
 #include "agents/agent_action.hpp"
 #include "lua_context.hpp"
 
-static void poc_lua_context(LuaContext &lua_context) {
-    auto res = lua_context.execute("return fs.ls(\".\", 2)");
-
-    if (res) {
-        std::cout << "Lua executed successfully: " << *res << "\n";
-    } else {
-        std::cerr << "Lua execution failed: " << res.error() << "\n";
-    }
-}
-
 int main(int argc, char *argv[]) {
     // 1. Parse CLI Options
     auto parser = app::create_parser();
@@ -283,8 +273,6 @@ int main(int argc, char *argv[]) {
 
     auto prompt = prompt_manager_preview.buildSystemPrompt(agent);
     std::println("Prompt preview:\n{}\n", prompt);
-
-    poc_lua_context(agent.get_lua_context());
 
     // Simple driver that echoes streamed tokens and tool results to stdout
     class StdIODriver : public IAgentDriver {

@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <print>
 #include <unordered_set>
 #include <vector>
 
@@ -42,7 +43,8 @@ void LuaContext::bindTools(
                                                    const ITool &tool) {
         auto bound_fn = [&tool, meta, invoker](sol::variadic_args va,
                                                sol::this_state s) {
-            const std::string prefix = "error: tool invocation failed - ";
+            constexpr std::string_view prefix =
+                "error: tool invocation failed - ";
             try {
                 std::expected<sol::object, std::string> result;
                 if (invoker) {
@@ -53,12 +55,14 @@ void LuaContext::bindTools(
                 if (result) {
                     return *result;
                 }
-                return sol::make_object(s, prefix + result.error());
+                return sol::make_object(s,
+                                        std::string(prefix) + result.error());
             } catch (const std::exception &ex) {
-                return sol::make_object(s, prefix + std::string{"exception: "} +
-                                               ex.what());
+                return sol::make_object(s, std::string(prefix) +
+                                               "exception: " + ex.what());
             } catch (...) {
-                return sol::make_object(s, prefix + "unknown exception");
+                return sol::make_object(s, std::string(prefix) +
+                                               "unknown exception");
             }
         };
 
@@ -300,13 +304,28 @@ LuaContext::luaObjectToJson(const sol::object &obj) {
 std::expected<std::string, std::string>
 LuaContext::luaVariadicToJson(sol::variadic_args va, sol::this_state s) {
     sol::state_view lua(s);
-    sol::table arr = lua.create_table(static_cast<int>(va.size()), 0);
-    int idx = 1;
-    for (auto v : va) {
-        arr[idx++] = v;
+    sol::stack_guard guard(lua); // keep stack balanced while we inspect args
+    try {
+        std::string json = "[";
+        bool first = true;
+        for (auto v : va) {
+            sol::object obj(v.lua_state(), v.stack_index());
+            auto item = luaObjectToJson(obj);
+            if (!item) {
+                return std::unexpected(item.error());
+            }
+            if (!first) {
+                json += ",";
+            }
+            first = false;
+            json += *item;
+        }
+        json += "]";
+        return json;
+    } catch (const std::exception &ex) {
+        return std::unexpected(std::string{"variadic_to_json exception: "} +
+                               ex.what());
     }
-    sol::object as_obj = arr;
-    return luaObjectToJson(as_obj);
 }
 
 // escape_json moved to json_utils.hpp

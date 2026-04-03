@@ -64,11 +64,12 @@ std::expected<Args, std::string> parse_pos_or_table(sol::variadic_args va,
 
     // Posicional
     auto get = [&](size_t i) -> sol::object {
-        return i < va.size()
-                   ? sol::object(
-                         va[static_cast<sol::variadic_args::difference_type>(
-                             i)])
-                   : sol::object{};
+        if (i >= va.size()) {
+            return sol::object{};
+        }
+        auto it = va.begin();
+        std::advance(it, static_cast<std::ptrdiff_t>(i));
+        return sol::object(*it);
     };
     auto read_pos = [&](auto &spec) -> std::optional<std::string> {
         if (spec.pos >= va.size()) {
