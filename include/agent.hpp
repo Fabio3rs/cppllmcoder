@@ -16,6 +16,7 @@
 
 class BrainStore;
 class IAgentDriver;
+class DoneTaskSignal;
 
 // --- Metadados e autorização de ferramentas ---
 
@@ -145,7 +146,8 @@ class Agent {
           std::shared_ptr<IPromptManager> prompts,
           std::shared_ptr<IToolConsentProvider> consent,
           std::shared_ptr<IExecutionLogger> logger,
-          std::shared_ptr<IStatsRecorder> stats);
+          std::shared_ptr<IStatsRecorder> stats,
+          std::shared_ptr<DoneTaskSignal> done = {});
     ~Agent();
 
     // Executa um turno: envia para LLM -> extrai Lua -> executa -> retorna
@@ -178,6 +180,7 @@ class Agent {
     std::shared_ptr<IToolConsentProvider> consent_provider;
     std::shared_ptr<IExecutionLogger> execution_logger;
     std::shared_ptr<IStatsRecorder> stats_recorder;
+    std::shared_ptr<DoneTaskSignal> done_task_signal;
     SessionInfo session_info;
     std::unique_ptr<BrainStore> brain_store;
 

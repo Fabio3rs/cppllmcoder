@@ -2,20 +2,16 @@
 
 #include "cli/option_parser_decls.hpp"
 #include "cli/option_parser_impl.hpp"
+#include "options.hpp"
 #include <array>
 #include <span>
 #include <string>
 #include <string_view>
-#include "options.hpp"
 
 namespace app {
 
-// Valores permitidos para demonstração de restrição (exemplo: modelos
-// homologados)
-inline constexpr std::array<std::string_view, 3> ALLOWED_MODELS = {
-    "qwen2.5-coder:7b", "qwen2.5-coder:14b", "codestral:latest"};
 
-inline constexpr std::array<cli::OptionSpec<Options>, 8> OPTION_SPECS = {{
+inline constexpr std::array<cli::OptionSpec<Options>, 9> OPTION_SPECS = {{
     {
         .long_name = "verbose",
         .short_name = 'v',
@@ -56,7 +52,7 @@ inline constexpr std::array<cli::OptionSpec<Options>, 8> OPTION_SPECS = {{
         .value_name = "<name>",
         .help = "Nome do modelo LLM.",
         .long_help = "Especifica qual modelo do Ollama deve ser utilizado para geração de código Lua.",
-        .allowed_values = ALLOWED_MODELS, // Restringe aos modelos na array acima
+        .allowed_values = {},
         .apply = [](Options &cfg, std::string_view val) { cfg.model = std::string(val); },
         .required = false
     },
@@ -102,6 +98,19 @@ inline constexpr std::array<cli::OptionSpec<Options>, 8> OPTION_SPECS = {{
         .long_help = "Exibe a versão atual do cppllmcoder e informações de build.",
         .allowed_values = {},
         .apply = [](Options &cfg, std::string_view) { cfg.version = true; },
+        .required = false
+    },
+    {
+        .long_name = "supports_tool_role",
+        .short_name = 't',
+        .takes_value = true,
+        .value_name = "<true|false>",
+        .help = "Habilita o envio de role=tool para o modelo.",
+        .long_help = "Habilita o envio de role=tool para o modelo. Use 'false' se usar OpenAI porque eles exigem um protocolo especial JSON para tool_call.",
+        .allowed_values = {},
+        .apply = [](Options &cfg, std::string_view val) {
+            cfg.supports_tool_role = (val == "true") || (val == "1");
+        },
         .required = false
     }
 }};

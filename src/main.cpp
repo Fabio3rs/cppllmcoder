@@ -8,6 +8,7 @@
 #include "runtime_defaults.hpp"
 #include "sqlite3raii.hpp"
 
+#include "getenv.hpp"
 #include <atomic>
 #include <filesystem>
 #include <iostream>
@@ -270,7 +271,7 @@ int main(int argc, char *argv[]) {
 
     // Prepare agent
     Agent agent(cfg, runtime.tools, runtime.prompts, runtime.consent,
-                runtime.logger, runtime.stats);
+                runtime.logger, runtime.stats, runtime.done_signal);
 
     // Simple driver that echoes streamed tokens and tool results to stdout
     class StdIODriver : public IAgentDriver {
@@ -306,8 +307,11 @@ int main(int argc, char *argv[]) {
 
     StdIODriver driver;
 
+    auto auth_token = getenv_var("OPENAI_API_KEY");
+
     // OpenAI-compatible client (Ollama default)
-    openai::OpenAI openai_client{"", "", false, cfg.endpoint};
+    openai::OpenAI openai_client{std::string(auth_token), "", false,
+                                 cfg.endpoint};
 
     std::string user_input;
     while (true) {
@@ -325,8 +329,8 @@ int main(int argc, char *argv[]) {
         }
 
         if (runtime.done_signal && runtime.done_signal->consume()) {
-            std::println("done_task() chamado. Encerrando a sessão.");
-            break;
+            std::println(
+                "done_task() chamado. Loop interno concluído; continue.");
         }
     }
 }

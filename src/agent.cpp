@@ -3,6 +3,7 @@
 #include "agent_driver.hpp"
 #include "agents/agent_action.hpp"
 #include "brain_store.hpp"
+#include "done_task_signal.hpp"
 #include "json_utils.hpp"
 #include "llm_chat_streamer.hpp"
 #include "time_utils.hpp"
@@ -63,10 +64,12 @@ Agent::Agent(const app::Options &opts, std::shared_ptr<ToolRegistry> tools,
              std::shared_ptr<IPromptManager> prompts,
              std::shared_ptr<IToolConsentProvider> consent,
              std::shared_ptr<IExecutionLogger> logger,
-             std::shared_ptr<IStatsRecorder> stats)
+             std::shared_ptr<IStatsRecorder> stats,
+             std::shared_ptr<DoneTaskSignal> done)
     : options(opts), tool_registry(std::move(tools)),
       prompt_manager(std::move(prompts)), consent_provider(std::move(consent)),
-      execution_logger(std::move(logger)), stats_recorder(std::move(stats)) {
+      execution_logger(std::move(logger)), stats_recorder(std::move(stats)),
+      done_task_signal(std::move(done)) {
     session_info.id = options.session_id_override.empty()
                           ? generate_uuid_v4()
                           : options.session_id_override;
@@ -203,99 +206,140 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
     history.push_back(user_msg);
     persist_message(history.back());
 
-    nlohmann::json req;
-    req["model"] = options.model;
-    req["messages"] = nlohmann::json::array();
-    for (const auto &msg : history) {
-        req["messages"].push_back(
-            {{"role", msg.role_to_string()}, {"content", msg.content}});
-    }
-    req["stream"] = true;
-    req["stream_options"] = {{"include_usage", true}};
-
-    llm::ChatStreamer streamer(openai_client);
-    const auto start = now_steady();
-    llm::Usage usage{};
-    const std::string reply = streamer.stream(std::move(req), driver, &usage);
-    const auto end = now_steady();
-    const auto duration = elapsed_ms(start, end);
-
-    const auto now_after = now_system();
-    Message assistant_msg{.id = 0,
-                          .role = MessageRole::Assistant,
-                          .content = reply,
-                          .session_id = session_info.id,
-                          .created_at = to_iso8601_ms(now_after),
-                          .updated_at = to_iso8601_ms(now_after),
-                          .duration = duration,
-                          .token_count =
-                              usage.total_tokens >= 0 ? usage.total_tokens : 0};
-    history.push_back(assistant_msg);
-    persist_message(history.back());
-
-    if (stats_recorder && usage.total_tokens >= 0) {
-        stats_recorder->incrementTokenCount(usage.total_tokens);
+    if (done_task_signal) {
+        done_task_signal->reset();
     }
 
-    AgentAction action = AgentAction::parse(reply);
-    if (action.has_code) {
-        const auto lua_start = now_steady();
-        auto lua_result = luaContext.execute(action.lua_code);
-        const auto lua_end = now_steady();
-        const auto lua_duration = elapsed_ms(lua_start, lua_end);
+    std::string full_reply;
 
-        const bool success = lua_result.has_value();
-        const std::string summary = success ? *lua_result : lua_result.error();
-        driver.on_tool_result("lua", success, summary);
+    while (true) {
+        nlohmann::json req;
+        req["model"] = options.model;
+        req["messages"] = nlohmann::json::array();
+        for (const auto &msg : history) {
 
-        // Persist tool invocation-style log for Lua (and mirror to execution
-        // log)
-        if (brain_store || execution_logger) {
-            ToolMetadata meta{.name = "lua",
-                              .description = "inline lua execution",
-                              .arguments = {},
-                              .usage_example = "",
-                              .returns = "",
-                              .danger_tags = {},
-                              .is_sensitive = false,
-                              .always_show_in_prompt = false};
-            ToolInvocationContext ctx{
-                meta,                         // metadata
-                std::string(action.lua_code), // store script
-                0,                            // estimated_token_cost
-                lua_duration,                 // estimated_latency
-                session_info};
-            ToolDecision decision{}; // default allow
-
-            if (brain_store) {
-                brain_store->insertToolInvocation(ctx, decision, lua_duration,
-                                                  std::chrono::milliseconds{0},
-                                                  success, summary);
-                brain_store->insertExecutionLog(
-                    "", session_info.id, action.lua_code, summary,
-                    success ? "" : summary, 0, lua_duration);
-            }
-
-            if (execution_logger) {
-                execution_logger->logToolEvent(ctx, decision, lua_duration,
-                                               success, summary, session_info);
+            if (!options.supports_tool_role && msg.role == MessageRole::Tool) {
+                // OpenAI API don't suppport standalone tool role, so we can
+                // either skip these messages or convert them to "user"
+                // role. Here, we'll convert to "user" to preserve the
+                // information in the prompt.
+                auto content = std::format(
+                    "<|tool_response|>{}</|tool_response|>", msg.content);
+                req["messages"].push_back(
+                    {{"role", "user"}, {"content", content}});
+            } else {
+                auto role = msg.role_to_string();
+                req["messages"].push_back(
+                    {{"role", role}, {"content", msg.content}});
             }
         }
+        req["stream"] = true;
+        req["stream_options"] = {{"include_usage", true}};
 
-        const auto now_tool = now_system();
-        Message tool_msg{.id = 0,
-                         .role = MessageRole::Tool,
-                         .content = summary,
-                         .session_id = session_info.id,
-                         .created_at = to_iso8601_ms(now_tool),
-                         .updated_at = to_iso8601_ms(now_tool),
-                         .duration = lua_duration,
-                         .token_count = 0};
-        history.push_back(tool_msg);
+        llm::ChatStreamer streamer(openai_client);
+        const auto start = now_steady();
+        llm::Usage usage{};
+        const std::string reply =
+            streamer.stream(std::move(req), driver, &usage);
+        const auto end = now_steady();
+        const auto duration = elapsed_ms(start, end);
+
+        full_reply += reply;
+
+        const auto now_after = now_system();
+        Message assistant_msg{
+            .id = 0,
+            .role = MessageRole::Assistant,
+            .content = reply,
+            .session_id = session_info.id,
+            .created_at = to_iso8601_ms(now_after),
+            .updated_at = to_iso8601_ms(now_after),
+            .duration = duration,
+            .token_count = usage.total_tokens >= 0 ? usage.total_tokens : 0};
+        history.push_back(assistant_msg);
         persist_message(history.back());
+
+        if (stats_recorder && usage.total_tokens >= 0) {
+            stats_recorder->incrementTokenCount(usage.total_tokens);
+        }
+
+        AgentAction action = AgentAction::parse(reply);
+
+        if (!action.has_code) {
+            break;
+        }
+
+        {
+            const auto lua_start = now_steady();
+            auto lua_result = luaContext.execute(action.lua_code);
+            const auto lua_end = now_steady();
+            const auto lua_duration = elapsed_ms(lua_start, lua_end);
+
+            const bool success = lua_result.has_value();
+            const std::string summary =
+                success ? *lua_result : lua_result.error();
+            driver.on_tool_result("lua", success, summary);
+
+            // Persist tool invocation-style log for Lua (and mirror to
+            // execution log)
+            if (brain_store || execution_logger) {
+                ToolMetadata meta{.name = "lua",
+                                  .description = "inline lua execution",
+                                  .arguments = {},
+                                  .usage_example = "",
+                                  .returns = "",
+                                  .danger_tags = {},
+                                  .is_sensitive = false,
+                                  .always_show_in_prompt = false};
+                ToolInvocationContext ctx{
+                    meta,                         // metadata
+                    std::string(action.lua_code), // store script
+                    0,                            // estimated_token_cost
+                    lua_duration,                 // estimated_latency
+                    session_info};
+                ToolDecision decision{}; // default allow
+
+                if (brain_store) {
+                    brain_store->insertToolInvocation(
+                        ctx, decision, lua_duration,
+                        std::chrono::milliseconds{0}, success, summary);
+                    brain_store->insertExecutionLog(
+                        "", session_info.id, action.lua_code, summary,
+                        success ? "" : summary, 0, lua_duration);
+                }
+
+                if (execution_logger) {
+                    execution_logger->logToolEvent(ctx, decision, lua_duration,
+                                                   success, summary,
+                                                   session_info);
+                }
+            }
+
+            const auto now_tool = now_system();
+            Message tool_msg{.id = 0,
+                             .role = MessageRole::Tool,
+                             .content = summary,
+                             .session_id = session_info.id,
+                             .created_at = to_iso8601_ms(now_tool),
+                             .updated_at = to_iso8601_ms(now_tool),
+                             .duration = lua_duration,
+                             .token_count = 0};
+            history.push_back(tool_msg);
+            persist_message(history.back());
+        }
+
+        if (done_task_signal && done_task_signal->consume()) {
+            break;
+        }
+
+        if (!done_task_signal) {
+            // If no done_task_signal is present, we can't know if the task is
+            // done.
+            break;
+        }
     }
 
-    return reply;
+    return full_reply;
 }
 
 ToolDecision Agent::evaluate_tool_consent(const ToolInvocationContext &ctx) {

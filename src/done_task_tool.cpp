@@ -33,6 +33,10 @@ class DoneTaskTool final : public ITool {
         return sol::make_object(lua, std::string("task marked as done"));
     }
 
+    auto get_signal() const -> std::shared_ptr<DoneTaskSignal> {
+        return signal_;
+    }
+
   private:
     std::shared_ptr<DoneTaskSignal> signal_;
 };

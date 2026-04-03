@@ -19,6 +19,8 @@ struct Options {
     int max_tokens = 2048;
     int seed = -1;                   // -1 indica aleatório
     std::string session_id_override; // Permite replays ou uso determinístico
+    bool supports_tool_role = true;  // False se usar OpenAI porque eles exigem
+                                     // protocolo especial JSON para tool_call
 };
 
 } // namespace app
