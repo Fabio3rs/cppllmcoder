@@ -10,6 +10,8 @@
 
 #include "getenv.hpp"
 #include <atomic>
+#include <chrono>
+#include <cstddef>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -22,6 +24,351 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include <ftxui/component/component.hpp>
+#include <ftxui/component/event.hpp>
+#include <ftxui/component/screen_interactive.hpp>
+#include <ftxui/dom/elements.hpp>
+
+using namespace ftxui;
+
+// =============================================================================
+// DATA MODEL FOR COCKPIT
+// =============================================================================
+
+enum class AgentMode {
+    Ask,      // Read-only diagnosis
+    Guide,    // Propose, seek approval
+    Agent,    // Auto-execute approved steps
+    Yolo,     // Maximum autonomy (sandbox)
+};
+
+enum class LogKind {
+    System,   // Runtime, bootstrap
+    LLM,      // Model response, streaming
+    Lua,      // Lua VM execution, code blocks
+    Tool,     // Tool result
+    DB,       // Database query/update
+    Agent,    // Agent state, task lifecycle
+    MCP,      // Model Context Protocol
+    FS,       // File system operation
+    Warning,  // Policy check, risk flag
+    Error,    // Exception, failure
+};
+
+struct LogLine {
+    std::chrono::system_clock::time_point timestamp;
+    LogKind kind;
+    std::string task_id;
+    std::string session_id;
+    std::string text;
+    std::optional<int> duration_ms;
+};
+
+struct TaskNode {
+    std::string id;
+    std::string title;
+    std::string status;  // "pending", "running", "completed", "failed"
+    int depth = 0;
+    bool expanded = true;
+    std::string owner;
+    std::string summary;
+    std::chrono::milliseconds duration{0};
+    std::vector<std::shared_ptr<TaskNode>> children;
+};
+
+struct PointerItem {
+    std::string id;
+    std::string summary;
+    std::string source;  // "firmware.bin:0x4F00"
+    double relevance_score = 0.0;  // 0.0 to 1.0
+    std::vector<std::string> related_pointers;
+    std::string last_updated;
+};
+
+struct ToolItem {
+    std::string name;
+    std::string status;     // "ready", "running", "restricted", "failed"
+    int avg_latency_ms = 0;
+    std::string description;
+    std::string risk_level; // "low", "medium", "high"
+    int last_call_ms = 0;
+};
+
+struct ApprovalItem {
+    std::string title;
+    std::string risk;
+    std::string details;
+    std::string action_id;
+};
+
+struct DiffHunk {
+    std::string file_path;
+    int line_start = 0;
+    int line_count = 0;
+    std::vector<std::string> old_lines;
+    std::vector<std::string> new_lines;
+    bool staged = false;
+};
+
+struct CockpitState {
+    // Session identity
+    std::string session_id;
+    std::string workspace;
+    std::string model;
+    std::string branch;
+    std::string db_path;
+    
+    // Runtime config
+    AgentMode mode = AgentMode::Guide;
+    bool sandbox_enabled = true;
+    bool auto_approve = false;
+    
+    // UI state
+    int selected_tab = 0;  // 0=Chat, 1=Tasks, 2=Pointers, 3=Diff, 4=Tools, 5=Logs, 6=Review
+    int selected_task = 0;
+    int selected_pointer = 0;
+    int selected_tool = 0;
+    int selected_log = 0;
+    unsigned int selected_approval = 0;
+    bool show_inspector = true;
+    bool show_help = false;
+    
+    // Dynamic state
+    std::string input_value;
+    std::string current_action = "Initializing...";
+    std::string mission;
+    
+    std::vector<std::string> tabs = {
+        "Chat/Plan",
+        "Tasks",
+        "Pointers",
+        "Diff",
+        "Tools",
+        "Logs",
+        "Review",
+    };
+    
+    std::vector<std::shared_ptr<TaskNode>> root_tasks;
+    std::vector<PointerItem> pointers;
+    std::vector<ToolItem> tools;
+    std::vector<LogLine> logs;
+    std::vector<ApprovalItem> approvals;
+    std::vector<DiffHunk> diff_hunks;
+    std::vector<std::string> conversation;
+    
+    // Metadata
+    int total_subagents = 0;
+    int estimated_tokens = 0;
+    double estimated_cost = 0.0;
+};
+
+// =============================================================================
+// HELPER FUNCTIONS
+// =============================================================================
+
+std::string mode_to_string(AgentMode mode) {
+    switch (mode) {
+    case AgentMode::Ask:
+        return "ASK";
+    case AgentMode::Guide:
+        return "GUIDE";
+    case AgentMode::Agent:
+        return "AGENT";
+    case AgentMode::Yolo:
+        return "YOLO";
+    }
+    return "UNKNOWN";
+}
+
+Color mode_to_color(AgentMode mode) {
+    switch (mode) {
+    case AgentMode::Ask:
+        return Color::Blue;
+    case AgentMode::Guide:
+        return Color::Yellow;
+    case AgentMode::Agent:
+        return Color::Green;
+    case AgentMode::Yolo:
+        return Color::Red;
+    }
+    return Color::White;
+}
+
+Color status_color(const std::string &status) {
+    if (status == "completed" || status == "ready")
+        return Color::Green;
+    if (status == "running")
+        return Color::Yellow;
+    if (status == "queued" || status == "restricted")
+        return Color::Magenta;
+    if (status == "failed")
+        return Color::Red;
+    return Color::White;
+}
+
+Color log_color(LogKind kind) {
+    switch (kind) {
+    case LogKind::System:
+        return Color::Cyan;
+    case LogKind::LLM:
+        return Color::Blue;
+    case LogKind::Lua:
+        return Color::Yellow;
+    case LogKind::Tool:
+        return Color::Green;
+    case LogKind::DB:
+        return Color::Magenta;
+    case LogKind::Agent:
+        return Color::White;
+    case LogKind::MCP:
+        return Color::Cyan;
+    case LogKind::FS:
+        return Color::Blue;
+    case LogKind::Warning:
+        return Color::YellowLight;
+    case LogKind::Error:
+        return Color::Red;
+    }
+    return Color::White;
+}
+
+std::string log_kind_label(LogKind kind) {
+    switch (kind) {
+    case LogKind::System:
+        return "SYS";
+    case LogKind::LLM:
+        return "LLM";
+    case LogKind::Lua:
+        return "LUA";
+    case LogKind::Tool:
+        return "TOOL";
+    case LogKind::DB:
+        return "DB";
+    case LogKind::Agent:
+        return "AGENT";
+    case LogKind::MCP:
+        return "MCP";
+    case LogKind::FS:
+        return "FS";
+    case LogKind::Warning:
+        return "WARN";
+    case LogKind::Error:
+        return "ERR";
+    }
+    return "?";
+}
+
+std::string timestamp_str(const std::chrono::system_clock::time_point &tp) {
+    auto time = std::chrono::system_clock::to_time_t(tp);
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                  tp.time_since_epoch()) %
+              1000;
+    struct tm *tm_info = std::localtime(&time);
+    char buf[16];
+    std::strftime(buf, sizeof(buf), "%H:%M:%S", tm_info);
+    return std::string(buf) + "." + std::to_string(ms.count());
+}
+
+std::string indent_for_depth(int depth) {
+    return std::string(static_cast<size_t>(depth) * 2, ' ');
+}
+
+// =============================================================================
+// UI COMPONENTS
+// =============================================================================
+
+Element header_bar(const CockpitState &state) {
+    return hbox({
+               text("   CPP-LLM-CODER ") | bold | color(Color::Cyan),
+               text(" mission: ") | dim,
+               text(state.mission) | flex,
+               text(" mode ") | dim,
+               text(" " + mode_to_string(state.mode) + " ") | bold |
+                   color(mode_to_color(state.mode)),
+               text(" "),
+           }) |
+           border;
+}
+
+Element context_bar(const CockpitState &state) {
+    return hbox({
+               text(" model: " + state.model + " ") | color(Color::Green),
+               separatorEmpty(),
+               text(" ws: " + state.workspace + " ") | dim,
+               separatorEmpty(),
+               text(" branch: " + state.branch + " ") | dim,
+               separatorEmpty(),
+               text(" session: " + state.session_id.substr(0, 12) + " ") | dim,
+               separatorEmpty(),
+               text(" tokens: " + std::to_string(state.estimated_tokens) +
+                    " ") |
+                   dim,
+               separatorEmpty(),
+               text(" sandbox: " +
+                    std::string(state.sandbox_enabled ? "ON" : "OFF") + " ") |
+                   color(state.sandbox_enabled ? Color::Green : Color::Red),
+               separatorEmpty(),
+               text(" auto-approve: " +
+                    std::string(state.auto_approve ? "ON" : "OFF") + " ") |
+                   color(state.auto_approve ? Color::Red : Color::Yellow),
+           }) |
+           border;
+}
+
+Element inspector_panel(const CockpitState &state) {
+    Elements lines;
+    
+    lines.push_back(text("Inspector") | bold | color(Color::Cyan));
+    
+    if (state.selected_tab == 1 && !state.root_tasks.empty()) {
+        // Task details
+        lines.push_back(separator());
+        auto &task = state.root_tasks[static_cast<size_t>(state.selected_task)];
+        lines.push_back(text("Task: " + task->id) | bold);
+        lines.push_back(text("Status: " + task->status) |
+                        color(status_color(task->status)));
+        lines.push_back(text("Owner: " + task->owner));
+        lines.push_back(
+            text("Duration: " + std::to_string(task->duration.count()) + "ms"));
+    } else if (state.selected_tab == 2 && !state.pointers.empty()) {
+        // Pointer details
+        lines.push_back(separator());
+        auto &ptr = state.pointers[static_cast<size_t>(state.selected_pointer)];
+        lines.push_back(text("Pointer: " + ptr.id) | bold | color(Color::Yellow));
+        lines.push_back(text("Score: " + std::to_string(ptr.relevance_score)));
+        lines.push_back(text("Source: " + ptr.source));
+        lines.push_back(paragraph(ptr.summary));
+        if (!ptr.related_pointers.empty()) {
+            lines.push_back(text("Related:") | dim);
+            for (const auto &rp : ptr.related_pointers) {
+                lines.push_back(text("  → " + rp));
+            }
+        }
+    } else if (state.selected_tab == 4 && !state.tools.empty()) {
+        // Tool details
+        lines.push_back(separator());
+        auto &tool = state.tools[static_cast<size_t>(state.selected_tool)];
+        lines.push_back(text("Tool: " + tool.name) | bold);
+        lines.push_back(text("Status: " + tool.status) |
+                        color(status_color(tool.status)));
+        lines.push_back(text("Risk: " + tool.risk_level));
+        lines.push_back(text("Latency: " + std::to_string(tool.avg_latency_ms) +
+                             "ms"));
+        lines.push_back(paragraph(tool.description));
+    }
+    
+    lines.push_back(separator());
+    lines.push_back(text("Current Action") | bold | color(Color::Yellow));
+    lines.push_back(paragraph(state.current_action));
+    
+    return window(text(" Inspector "),
+                  vbox(std::move(lines)) | size(WIDTH, GREATER_THAN, 32));
+}
+
+// =============================================================================
+// OLD CODE (commented, kept for reference)
+// =============================================================================
 
 /*static int dry_run() {
     LuaContext engine;
@@ -217,9 +564,9 @@ int main() {
     test_sqlitevec_embd();
 }*/
 
-// Esboço do Loop Principal na PoC
-#include "agents/agent_action.hpp"
-#include "lua_context.hpp"
+// =============================================================================
+// MAIN COCKPIT LOOP
+// =============================================================================
 
 int main(int argc, char *argv[]) {
     // 1. Parse CLI Options
@@ -314,141 +661,272 @@ int main(int argc, char *argv[]) {
     openai::OpenAI openai_client{std::string(auth_token), "", false,
                                  cfg.endpoint};
 
-    std::string user_input;
-    while (true) {
-        std::print("\n[User]> ");
-        if (!std::getline(std::cin, user_input))
-            break;
-        if (user_input == "exit" || user_input == "quit")
-            break;
+    // Initialize cockpit state
+    CockpitState cockpit;
+    cockpit.session_id = "session_" + std::to_string(time(nullptr));
+    cockpit.workspace = cfg.workdir;
+    cockpit.model = cfg.model;
+    cockpit.mission = "Awaiting operator input...";
+    cockpit.db_path = ".cppllmcoder/brain.db";
+    
+    // Bootstrap sample tools
+    cockpit.tools = {
+        {"fs.read", "ready", 3, "Read file contents from workspace", "low", 0},
+        {"vector.search", "ready", 14, "Search semantic memory pointers",
+         "low", 0},
+        {"rlm.spawn", "ready", 7, "Spawn isolated sub-agent", "medium", 0},
+        {"db.query", "ready", 4, "Query structured agent memory", "low", 0},
+        {"sh", "restricted", 24, "Sandboxed shell command execution",
+         "high", 0},
+    };
 
-        try {
-            agent.run_step(user_input, driver, openai_client);
-        } catch (const std::exception &ex) {
-            std::cerr << "Erro ao chamar LLM: " << ex.what() << "\n";
-            break;
-        }
+    // Bootstrap sample task tree
+    auto root_task = std::make_shared<TaskNode>();
+    root_task->id = "T-001";
+    root_task->title = "Root: Analyze workspace";
+    root_task->status = "running";
+    root_task->owner = "main";
+    root_task->summary = "Coordinator initialized";
+    cockpit.root_tasks.push_back(root_task);
 
-        if (runtime.done_signal && runtime.done_signal->consume()) {
-            std::println(
-                "done_task() chamado. Loop interno concluído; continue.");
-        }
-    }
-}
+    // Add initial log
+    LogLine boot_log;
+    boot_log.timestamp = std::chrono::system_clock::now();
+    boot_log.kind = LogKind::System;
+    boot_log.task_id = "T-001";
+    boot_log.session_id = cockpit.session_id;
+    boot_log.text = "CPP-LLM-CODER cockpit initialized";
+    cockpit.logs.push_back(boot_log);
 
-/*#include <ftxui/component/component.hpp>
-#include <ftxui/component/screen_interactive.hpp>
-#include <ftxui/dom/elements.hpp>
-#include <string>
-#include <vector>
-
-using namespace ftxui;
-
-int main(int argc, char **argv) {
-    auto parser = app::create_parser();
-    auto result = parser.parse(argc, argv);
-
-    switch (result.status) {
-    case cli::ParseStatus::ShowHelp:
-        std::cout << parser.generate_help(argv[0]);
-        return 0;
-
-    case cli::ParseStatus::ShowHelpVerbose:
-        std::cout << parser.generate_help_verbose(argv[0]);
-        return 0;
-
-    case cli::ParseStatus::ShowVersion:
-        std::print("CPP-LLM-CODER v0.1.0-alpha\n");
-        return 0;
-
-    case cli::ParseStatus::ShowCompletion:
-        // Completion já foi tratada internamente, apenas sai
-        return 0;
-
-    case cli::ParseStatus::Error:
-        std::cerr << "Erro: " << result.error_message << "\n";
-        std::cerr << "Use --help para ver as opções disponíveis.\n";
-        return 1;
-
-    case cli::ParseStatus::Ok:
-        break;
-    }
-
-    std::vector<std::string> logs = {"SISTEMA: Motor C++23 inicializado.",
-                                     "LUA: VM carregada com sucesso.",
-                                     "DB: Conectado a .cppllmcoder/brain.db"};
-
-    std::vector<std::string> tasks = {"[X] Init DB", "[ ] Analisar Firmware",
-                                      "[ ] Extrair Símbolos"};
-
-    std::string input_value;
+    // Launch TUI
     auto screen = ScreenInteractive::Fullscreen();
+    screen.TrackMouse(true);
 
-    Component input_field =
-        Input(&input_value, " Digita um comando (ex: scan)...");
+    // Tab headers as tabs
+    std::vector<std::string> tab_labels = cockpit.tabs;
 
-    input_field = CatchEvent(input_field, [&](Event event) {
+    auto tabs_component = Toggle(&tab_labels, &cockpit.selected_tab);
+
+    // Input field
+    Component input_component =
+        Input(&cockpit.input_value, " Type command or /help ...");
+
+    input_component = CatchEvent(input_component, [&](Event event) {
         if (event == Event::Return) {
-            if (!input_value.empty()) {
-                logs.push_back("USER: " + input_value);
-                logs.push_back("MOTOR: Executando script Lua para '" +
-                               input_value + "'...");
-                input_value.clear();
+            if (!cockpit.input_value.empty()) {
+                // Log user input
+                LogLine user_log;
+                user_log.timestamp = std::chrono::system_clock::now();
+                user_log.kind = LogKind::Agent;
+                user_log.task_id = "T-001";
+                user_log.session_id = cockpit.session_id;
+                user_log.text = "User: " + cockpit.input_value;
+                cockpit.logs.push_back(user_log);
+
+                // Handle slash commands
+                if (cockpit.input_value[0] == '/') {
+                    // TODO: parse slash commands
+                    if (cockpit.input_value == "/help") {
+                        cockpit.current_action = "Showing help...";
+                    } else if (cockpit.input_value == "/mode ask") {
+                        cockpit.mode = AgentMode::Ask;
+                    } else if (cockpit.input_value == "/mode guide") {
+                        cockpit.mode = AgentMode::Guide;
+                    } else if (cockpit.input_value == "/mode agent") {
+                        cockpit.mode = AgentMode::Agent;
+                    } else if (cockpit.input_value == "/mode yolo") {
+                        cockpit.mode = AgentMode::Yolo;
+                    }
+                } else {
+                    // Normal user input to agent
+                    cockpit.current_action = "Processing user input...";
+                    // TODO: call agent.run_step() and update cockpit state
+                }
+
+                cockpit.input_value.clear();
                 return true;
             }
         }
         return false;
     });
 
-    auto renderer = Renderer(input_field, [&] {
-        Elements log_elements;
-        for (const auto &log : logs) {
-            log_elements.push_back(text(log));
+    // Main renderer
+    auto main_renderer = Renderer([&] {
+        Elements tab_content;
+
+        // Render selected tab
+        if (cockpit.selected_tab == 0) {
+            // Chat/Plan
+            tab_content.push_back(text("Chat/Plan") | bold);
+            tab_content.push_back(separator());
+            if (!cockpit.conversation.empty()) {
+                for (const auto &line : cockpit.conversation) {
+                    tab_content.push_back(paragraph(line));
+                }
+            } else {
+                tab_content.push_back(
+                    text("No conversation yet.") | color(Color::GrayDark));
+            }
+        } else if (cockpit.selected_tab == 1) {
+            // Tasks tree
+            tab_content.push_back(text("Task Tree") | bold);
+            tab_content.push_back(separator());
+            for (const auto &task : cockpit.root_tasks) {
+                tab_content.push_back(
+                    hbox({
+                        text(task->id + " "),
+                        text(task->title) | flex,
+                        text(task->status) | color(status_color(task->status)),
+                    }));
+            }
+        } else if (cockpit.selected_tab == 2) {
+            // Pointers
+            tab_content.push_back(text("Pointers/Memory") | bold);
+            tab_content.push_back(separator());
+            if (!cockpit.pointers.empty()) {
+                for (const auto &ptr : cockpit.pointers) {
+                    tab_content.push_back(
+                        hbox({
+                            text(ptr.id + " ") | bold | color(Color::Yellow),
+                            text(ptr.source) | dim,
+                        }));
+                    tab_content.push_back(paragraph(ptr.summary));
+                }
+            } else {
+                tab_content.push_back(
+                    text("No pointers yet.") | color(Color::GrayDark));
+            }
+        } else if (cockpit.selected_tab == 4) {
+            // Tools
+            tab_content.push_back(text("Tools") | bold);
+            tab_content.push_back(separator());
+            for (const auto &tool : cockpit.tools) {
+                tab_content.push_back(
+                    hbox({
+                        text(tool.name + " "),
+                        text(tool.status) | color(status_color(tool.status)),
+                        filler(),
+                        text(std::to_string(tool.avg_latency_ms) + "ms") | dim,
+                    }));
+            }
+        } else if (cockpit.selected_tab == 5) {
+            // Logs
+            tab_content.push_back(text("Execution Logs") | bold);
+            tab_content.push_back(separator());
+            for (const auto &log : cockpit.logs) {
+                std::string log_line =
+                    timestamp_str(log.timestamp) + " [" +
+                    log_kind_label(log.kind) + "] " + log.task_id + " " +
+                    log.text;
+                tab_content.push_back(text(log_line) | color(log_color(log.kind)));
+            }
         }
 
-        Elements task_elements;
-        for (const auto &task : tasks) {
-            task_elements.push_back(text(task) |
-                                    color(task.size() > 1 && task[1] == 'X'
-                                              ? Color::Green
-                                              : Color::Yellow));
-        }
+        Element left_panel =
+            window(text(" Main "),
+                   vbox(std::move(tab_content)) | yframe | flex);
 
-        Element header =
-            hbox({
-                text("   CPP-LLM-CODER ") | bold | color(Color::Cyan),
-                filler(),
-                text("v0.1.0-alpha ") | dim,
-            }) |
-            border;
+        Element right_panel =
+            cockpit.show_inspector ? inspector_panel(cockpit) : text("");
 
-        Element tasks_panel =
-            window(text(" Tarefas "),
-                   vbox(task_elements) | size(WIDTH, EQUAL, 25), LIGHT);
+        Element center = right_panel.get() != nullptr
+                             ? hbox({
+                                   left_panel,
+                                   right_panel,
+                               }) |
+                                   flex
+                             : left_panel;
 
-        Element logs_panel =
-            window(text(" Log de Execução "), vbox(log_elements) | flex, LIGHT);
+        Element header = header_bar(cockpit);
+        Element context = context_bar(cockpit);
+        Element tabs = tabs_component->Render() | border;
 
-        Element body = hbox({
-                           tasks_panel,
-                           logs_panel,
-                       }) |
-                       flex;
+        Element status_line = hbox({
+                                  text(" ◉ ") | color(Color::Green),
+                                  paragraph(cockpit.current_action) | flex,
+                              }) |
+                              border;
 
-        Element footer = hbox({
-                             text(" ❯ ") | bold | color(Color::Magenta),
-                             input_field->Render() | flex,
-                         }) |
-                         border;
+        Element input_line = hbox({
+                                text(" ❯ ") | bold | color(Color::Magenta),
+                                input_component->Render() | flex,
+                            }) |
+                            border;
 
         return vbox({
             header,
-            body,
-            footer,
+            context,
+            tabs,
+            center,
+            status_line,
+            input_line,
         });
     });
 
-    screen.Loop(renderer);
+    auto app = CatchEvent(main_renderer, [&](Event event) {
+        if (event == Event::Tab) {
+            cockpit.selected_tab =
+                (cockpit.selected_tab + 1) %
+                static_cast<int>(cockpit.tabs.size());
+            return true;
+        }
+
+        if (event == Event::TabReverse) {
+            cockpit.selected_tab =
+                (cockpit.selected_tab - 1 +
+                 static_cast<int>(cockpit.tabs.size())) %
+                static_cast<int>(cockpit.tabs.size());
+            return true;
+        }
+
+        if (event == Event::F1) {
+            cockpit.show_help = !cockpit.show_help;
+            return true;
+        }
+
+        if (event == Event::CtrlI) {
+            cockpit.show_inspector = !cockpit.show_inspector;
+            return true;
+        }
+
+        if (event == Event::Character('a')) {
+            if (!cockpit.approvals.empty()) {
+                LogLine approval_log;
+                approval_log.timestamp = std::chrono::system_clock::now();
+                approval_log.kind = LogKind::Agent;
+                approval_log.task_id = "T-001";
+                approval_log.session_id = cockpit.session_id;
+                approval_log.text =
+                    "Approved: " + cockpit.approvals.front().title;
+                cockpit.logs.push_back(approval_log);
+                cockpit.approvals.erase(cockpit.approvals.begin());
+            }
+            return true;
+        }
+
+        if (event == Event::Character('m')) {
+            switch (cockpit.mode) {
+            case AgentMode::Ask:
+                cockpit.mode = AgentMode::Guide;
+                break;
+            case AgentMode::Guide:
+                cockpit.mode = AgentMode::Agent;
+                break;
+            case AgentMode::Agent:
+                cockpit.mode = AgentMode::Yolo;
+                break;
+            case AgentMode::Yolo:
+                cockpit.mode = AgentMode::Ask;
+                break;
+            }
+            cockpit.current_action =
+                "Mode changed to " + mode_to_string(cockpit.mode);
+            return true;
+        }
+
+        return false;
+    });
+
+    screen.Loop(app);
     return 0;
 }
-*/

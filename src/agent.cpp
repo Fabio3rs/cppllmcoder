@@ -10,17 +10,10 @@
 #include "uuid_utils.hpp"
 #include <cctype>
 #include <cstdio>
-#include <iostream>
 #include <nlohmann/json.hpp>
 #include <openai/openai.hpp>
 #include <string_view>
 #include <utility>
-
-#if defined(_WIN32)
-#include <io.h>
-#else
-#include <unistd.h>
-#endif
 
 namespace {
 std::string build_params_json(const SessionInfo &s) {
