@@ -1,9 +1,9 @@
 #include "brain_store.hpp"
 
+#include "db_schema_sql.hpp"
 #include "exe_path_utils.hpp"
 #include <filesystem>
 #include <nlohmann/json.hpp>
-#include <sstream>
 
 namespace {
 std::optional<std::string_view> null_if_empty(std::string_view v) {

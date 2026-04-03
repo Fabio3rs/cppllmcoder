@@ -1,10 +1,8 @@
 #pragma once
 
-#include "free_wrap.hpp"
 #include <memory>
 #include <optional>
 #include <sqlite3.h>
-#include <stdexcept>
 #include <string>
 #include <string_view>
 

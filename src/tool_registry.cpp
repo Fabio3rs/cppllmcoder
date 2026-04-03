@@ -1,10 +1,9 @@
 #include "tool_registry.hpp"
 
-#include <ranges>
-
 void DefaultToolRegistry::registerTool(std::shared_ptr<ITool> tool) {
-    if (!tool)
+    if (!tool) {
         return;
+    }
     tools_[tool->describe().name] = std::move(tool);
 }
 
@@ -115,13 +114,15 @@ std::string DefaultToolRegistry::build_signature(const ToolMetadata &meta) {
     std::string sig = meta.name + "(";
     bool first = true;
     for (const auto &arg : meta.arguments) {
-        if (!first)
+        if (!first) {
             sig += ", ";
+        }
         first = false;
         sig += arg.name;
         sig += ":" + arg.type;
-        if (!arg.required)
+        if (!arg.required) {
             sig += "?";
+        }
     }
     sig += ")";
     return sig;

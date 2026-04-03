@@ -1,7 +1,6 @@
 #pragma once
 
 #include "agent.hpp"
-#include <algorithm>
 #include <cctype>
 #include <functional>
 #include <memory>

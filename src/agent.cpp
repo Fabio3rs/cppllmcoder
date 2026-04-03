@@ -6,8 +6,6 @@
 #include "json_utils.hpp"
 #include "llm_chat_streamer.hpp"
 #include "time_utils.hpp"
-#include "tool_registry.hpp"
-
 #include <nlohmann/json.hpp>
 #include <openai/openai.hpp>
 #include <random>

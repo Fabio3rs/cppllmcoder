@@ -10,7 +10,6 @@
 #include <functional>
 #include <memory>
 #include <openai/openai.hpp>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>

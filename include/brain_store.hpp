@@ -1,7 +1,6 @@
 #pragma once
 
 #include "agent.hpp"
-#include "db_schema_sql.hpp"
 #include "sqlite3raii.hpp"
 
 #include <chrono>
