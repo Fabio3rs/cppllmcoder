@@ -1,6 +1,6 @@
 #pragma once
 
-#include "agent.hpp"
+#include "prompts/prompt_manager.hpp"
 
 class DefaultPromptManager : public IPromptManager {
   public:

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "agent.hpp"
+#include "agent_types.hpp"
+#include "prompts/prompt_manager.hpp"
 #include <cctype>
 #include <functional>
 #include <memory>
