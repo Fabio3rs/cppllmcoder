@@ -21,6 +21,8 @@ SqliteDb::SqliteDb(std::string_view path) {
     }
     db_.reset(raw_db);
 
+    // Use WAL for better writer/reader concurrency.
+    exec("PRAGMA journal_mode=WAL;");
     exec("PRAGMA foreign_keys = ON;");
 }
 

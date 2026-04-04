@@ -30,6 +30,7 @@ class ChatStreamer {
   private:
     openai::OpenAI &client_;
     std::atomic<openai::StreamControl> control_;
+    std::string stop_sequence_;
 };
 
 } // namespace llm

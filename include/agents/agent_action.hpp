@@ -13,15 +13,24 @@ struct AgentAction {
         const std::string_view e_tag = "</code>";
 
         const auto start = raw.find(s_tag);
-        const auto end = start == std::string_view::npos
-                             ? std::string_view::npos
-                             : raw.find(e_tag, start + s_tag.size());
+        auto end = start == std::string_view::npos
+                       ? std::string_view::npos
+                       : raw.find(e_tag, start + s_tag.size());
 
-        if (start != std::string_view::npos && end != std::string_view::npos &&
-            end > start) {
+        // Support truncated responses where a stop sequence removed </code>.
+        // If we found <code> but not </code>, treat everything after <code>
+        // as the code block.
+        const bool truncated =
+            (start != std::string_view::npos && end == std::string_view::npos);
+
+        if (start != std::string_view::npos &&
+            (end != std::string_view::npos || truncated)) {
+
             std::string_view thought_view = raw.substr(0, start);
             std::string_view code_inner =
-                raw.substr(start + s_tag.size(), end - (start + s_tag.size()));
+                truncated ? raw.substr(start + s_tag.size())
+                          : raw.substr(start + s_tag.size(),
+                                       end - (start + s_tag.size()));
 
             // Limpeza de Markdown (```lua ... ```)
             if (const auto md_start = code_inner.find("```lua");

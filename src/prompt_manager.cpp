@@ -41,5 +41,8 @@ Reasoning: [your reasoning here]
                         TOOL_RESPONSE_TAG_CLOSE);
     }
 
+    prompt += "\nNOTE: if DB is available, the runtime system will inject "
+              "<id></id> on the end of the messages, for future tracking.\n";
+
     return prompt;
 }
