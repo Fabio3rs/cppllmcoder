@@ -21,6 +21,9 @@ struct Options {
     std::string session_id_override; // Permite replays ou uso determinístico
     bool supports_tool_role = true;  // False se usar OpenAI porque eles exigem
                                      // protocolo especial JSON para tool_call
+    bool list_sessions = false;      // Lista sessões persistidas e sai
+    std::string restore_session_id;  // ID de sessão a restaurar
+    bool restore_history = false;    // Recarrega histórico do DB se possível
 };
 
 } // namespace app

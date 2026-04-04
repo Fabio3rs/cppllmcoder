@@ -11,7 +11,7 @@
 namespace app {
 
 
-inline constexpr std::array<cli::OptionSpec<Options>, 9> OPTION_SPECS = {{
+inline constexpr std::array<cli::OptionSpec<Options>, 11> OPTION_SPECS = {{
     {
         .long_name = "verbose",
         .short_name = 'v',
@@ -110,6 +110,32 @@ inline constexpr std::array<cli::OptionSpec<Options>, 9> OPTION_SPECS = {{
         .allowed_values = {},
         .apply = [](Options &cfg, std::string_view val) {
             cfg.supports_tool_role = (val == "true") || (val == "1");
+        },
+        .required = false
+    },
+    {
+        .long_name = "list-sessions",
+        .short_name = '\0',
+        .takes_value = false,
+        .value_name = "",
+        .help = "Lista sessões salvas e sai.",
+        .long_help = "Mostra sessões persistidas no banco junto com contagem de mensagens.",
+        .allowed_values = {},
+        .apply = [](Options &cfg, std::string_view) { cfg.list_sessions = true; },
+        .required = false
+    },
+    {
+        .long_name = "restore-session",
+        .short_name = '\0',
+        .takes_value = true,
+        .value_name = "<id>",
+        .help = "Restaura uma sessão existente.",
+        .long_help = "Carrega histórico e parâmetros de uma sessão persistida para continuar a conversa.",
+        .allowed_values = {},
+        .apply = [](Options &cfg, std::string_view val) {
+            cfg.restore_session_id = std::string(val);
+            cfg.session_id_override = cfg.restore_session_id;
+            cfg.restore_history = true;
         },
         .required = false
     }
