@@ -131,6 +131,22 @@ struct DiffHunk {
     bool staged = false;
 };
 
+enum class ChatRole {
+    User,
+    Assistant,
+    System,
+    Tool,
+};
+
+struct ChatItem {
+    ChatRole role;
+    std::string title; // short header (e.g. "[lua] success=true 4721 bytes")
+    std::string text;  // full payload
+    bool collapsible = false;
+    bool expanded = false;
+    int preview_len = 200;
+};
+
 struct CockpitState {
     // Session identity
     std::string session_id;
@@ -179,7 +195,8 @@ struct CockpitState {
     std::deque<std::pair<std::string, std::string>>
         pending_turns; // action_id, text
     std::vector<DiffHunk> diff_hunks;
-    std::vector<std::string> conversation;
+    std::vector<ChatItem> conversation;
+    int selected_chat = 0;
 
     // Metadata
     int total_subagents = 0;
@@ -1056,8 +1073,16 @@ int main(int argc, char *argv[]) {
         }
         agent_busy.store(true, std::memory_order_relaxed);
         cockpit.current_action = "Running agent turn...";
-        cockpit.conversation.push_back("user: " + user_msg);
-        cockpit.conversation.push_back("assistant: ");
+        cockpit.conversation.push_back(ChatItem{
+            .role = ChatRole::User,
+            .title = {},
+            .text = user_msg,
+        });
+        cockpit.conversation.push_back(ChatItem{
+            .role = ChatRole::Assistant,
+            .title = {},
+            .text = {},
+        });
 
         // Create a shared driver accessible from the TUI thread for
         // stop/inject while the agent turn is running.
@@ -1229,58 +1254,84 @@ int main(int argc, char *argv[]) {
 
     // Components per tab
 
-    // Helper: determine role prefix color for chat lines
-    auto chat_line_elements = [&](const std::string &line) -> Element {
-        // Detect role from prefix.
-        // Use flexbox so that paragraph() can word-wrap into the remaining
-        // space instead of overflowing past the right edge.
-        if (line.starts_with("user: ")) {
-            auto label = text("user: ") | bold | color(Color::Green);
-            auto body = paragraph(line.substr(6)) | flex;
-            return hbox({label, body});
+    // Helper: render a structured ChatItem with collapsible support
+    auto render_chat_item = [&](const ChatItem &item, bool focused) -> Element {
+        auto role_label = [&]() -> Element {
+            switch (item.role) {
+            case ChatRole::User:
+                return text("user: ") | bold | color(Color::Green);
+            case ChatRole::Assistant:
+                return text("assistant: ") | bold | color(Color::Cyan);
+            case ChatRole::System:
+                return text("system: ") | bold | color(Color::Yellow);
+            case ChatRole::Tool:
+                return text("tool: ") | bold | color(Color::Yellow);
+            }
+            return text("");
+        };
+
+        if (!item.collapsible) {
+            auto row = hbox({
+                role_label(),
+                paragraph(item.text) | flex,
+            });
+            if (focused) {
+                row = row | inverted;
+            }
+            return row;
         }
-        if (line.starts_with("assistant: ")) {
-            auto label = text("assistant: ") | bold | color(Color::Cyan);
-            auto body = paragraph(line.substr(11)) | flex;
-            return hbox({label, body});
-        }
-        if (line.starts_with("system: ")) {
-            auto label = text("system: ") | bold | color(Color::Yellow);
-            auto body = paragraph(line.substr(8)) | flex;
-            return hbox({label, body});
-        }
-        if (line.starts_with("tool: ")) {
-            auto label = text("tool: ") | bold | color(Color::Yellow);
-            // Tools tend to produce very long output — show only a
-            // preview so the chat stays readable.
-            constexpr size_t kToolPreviewLen = 200;
-            std::string raw = line.substr(6);
-            std::string preview;
-            if (raw.size() > kToolPreviewLen) {
+
+        // Collapsible item (typically tool results)
+        std::string header_text =
+            item.title.empty() ? (std::to_string(item.text.size()) + " chars")
+                               : item.title;
+
+        auto marker = item.expanded ? "[-] " : "[+] ";
+        auto header = hbox({
+            text(marker) | bold | color(Color::Magenta),
+            role_label(),
+            text(header_text) | dim,
+        });
+
+        Element body;
+        if (item.expanded) {
+            body = paragraph(item.text) | color(Color::GrayLight);
+        } else {
+            std::string preview = item.text;
+            if (static_cast<int>(preview.size()) > item.preview_len) {
                 // Find the last newline within the preview window so we
                 // don't cut mid-line.
-                auto cut = raw.rfind('\n', kToolPreviewLen);
+                auto cut =
+                    preview.rfind('\n', static_cast<size_t>(item.preview_len));
                 if (cut == std::string::npos || cut == 0) {
-                    cut = kToolPreviewLen;
+                    cut = static_cast<size_t>(item.preview_len);
                 }
-                preview = raw.substr(0, cut) + "\n  … (" +
-                          std::to_string(raw.size() - cut) +
+                preview = preview.substr(0, cut) + "\n  … (" +
+                          std::to_string(item.text.size() - cut) +
                           " chars truncated)";
-            } else {
-                preview = raw;
             }
-            auto body = paragraph(preview) | color(Color::GrayLight) | flex;
-            return hbox({label, body});
+            body = paragraph(preview) | color(Color::GrayDark);
         }
-        // Continuation of previous message (no prefix)
-        return paragraph(line);
+
+        auto box = vbox({
+            header,
+            body,
+        });
+        if (focused) {
+            box = box | inverted;
+        }
+        return box;
     };
 
     Component chat_tab = Renderer([&] {
         Elements lines;
         if (!cockpit.conversation.empty()) {
-            for (const auto &line : cockpit.conversation) {
-                lines.push_back(chat_line_elements(line));
+            for (int i = 0; i < static_cast<int>(cockpit.conversation.size());
+                 ++i) {
+                lines.push_back(render_chat_item(
+                    cockpit.conversation[static_cast<size_t>(i)],
+                    i == cockpit.selected_chat));
+                lines.push_back(separatorEmpty());
             }
         } else {
             lines.push_back(text("No conversation yet.") |
@@ -1309,13 +1360,14 @@ int main(int argc, char *argv[]) {
                       content | frame | vscroll_indicator | yframe | flex);
     });
 
-    // Scroll control: PageUp/PageDown/Arrows/Mouse-wheel adjust position,
+    // Scroll control: PageUp/PageDown/Mouse-wheel adjust scroll position.
+    // Arrow Up/Down navigate between chat items (selected_chat).
+    // Enter/Space toggles expand/collapse on collapsible items.
     // End resumes auto-scroll, Home jumps to top.
     chat_tab = CatchEvent(chat_tab, [&](Event event) {
         if (cockpit.selected_tab != 0) {
             return false;
         }
-        constexpr float kLineStep = 0.03F;  // ~3 % per arrow press
         constexpr float kPageStep = 0.25F;  // ~25 % per PageUp/Down
         constexpr float kWheelStep = 0.06F; // ~6 % per mouse wheel notch
 
@@ -1338,20 +1390,42 @@ int main(int argc, char *argv[]) {
             }
         }
 
+        // Arrow keys navigate between chat items
         if (event == Event::ArrowUp) {
-            cockpit.chat_auto_scroll = false;
-            cockpit.chat_scroll_position =
-                std::max(0.0F, cockpit.chat_scroll_position - kLineStep);
-            return true;
-        }
-        if (event == Event::ArrowDown) {
-            cockpit.chat_scroll_position =
-                std::min(1.0F, cockpit.chat_scroll_position + kLineStep);
-            if (cockpit.chat_scroll_position >= 1.0F) {
-                cockpit.chat_auto_scroll = true;
+            if (cockpit.selected_chat > 0) {
+                cockpit.selected_chat--;
+                cockpit.chat_auto_scroll = false;
             }
             return true;
         }
+        if (event == Event::ArrowDown) {
+            if (cockpit.selected_chat + 1 <
+                static_cast<int>(cockpit.conversation.size())) {
+                cockpit.selected_chat++;
+                // If we reached the last item, resume auto-scroll
+                if (cockpit.selected_chat + 1 >=
+                    static_cast<int>(cockpit.conversation.size())) {
+                    cockpit.chat_auto_scroll = true;
+                    cockpit.chat_scroll_position = 1.0F;
+                }
+            }
+            return true;
+        }
+
+        // Enter or Space toggles expand/collapse on collapsible items
+        if ((event == Event::Return || event == Event::Character(' ')) &&
+            cockpit.selected_chat >= 0 &&
+            cockpit.selected_chat <
+                static_cast<int>(cockpit.conversation.size())) {
+            auto &item =
+                cockpit
+                    .conversation[static_cast<size_t>(cockpit.selected_chat)];
+            if (item.collapsible) {
+                item.expanded = !item.expanded;
+                return true;
+            }
+        }
+
         if (event == Event::PageUp) {
             cockpit.chat_auto_scroll = false;
             cockpit.chat_scroll_position =
@@ -1585,7 +1659,11 @@ int main(int argc, char *argv[]) {
                             "\n" + "Approvals pending: " +
                             std::to_string(cockpit.approvals.size()) + "\n" +
                             "Mode: " + mode_to_string(cockpit.mode);
-                        cockpit.conversation.push_back("system: " + stats_text);
+                        cockpit.conversation.push_back(ChatItem{
+                            .role = ChatRole::System,
+                            .title = {},
+                            .text = stats_text,
+                        });
                         cockpit.selected_tab = 0;
                         cockpit.current_action = "Showing stats";
                     } else if (cockpit.input_value == "/diff") {
@@ -1855,8 +1933,11 @@ int main(int argc, char *argv[]) {
             text(""),
             text("── Navigation ──") | bold | color(Color::Cyan),
             text("  Tab/Shift+Tab    Move focus between components"),
-            text("  Arrow keys       Navigate lists"),
+            text("  Arrow keys       Navigate lists / chat items"),
+            text("  Space/Enter      Toggle expand/collapse (Chat tool items)"),
             text("  Space/Enter      Toggle staged (Diff tab)"),
+            text("  PageUp/Down      Scroll chat / logs"),
+            text("  Home/End         Jump to top / resume auto-scroll"),
             text(""),
             text("── Slash Commands ──") | bold | color(Color::Cyan),
             text("  /help                Show this help"),
@@ -1923,16 +2004,24 @@ int main(int argc, char *argv[]) {
                     overloaded{
                         [&](const EvToken &tok) {
                             if (cockpit.conversation.empty() ||
-                                cockpit.conversation.back().rfind("assistant:",
-                                                                  0) != 0) {
-                                cockpit.conversation.push_back("assistant: ");
+                                cockpit.conversation.back().role !=
+                                    ChatRole::Assistant) {
+                                cockpit.conversation.push_back(ChatItem{
+                                    .role = ChatRole::Assistant,
+                                    .title = {},
+                                    .text = {},
+                                });
                             }
-                            cockpit.conversation.back() += tok.text;
+                            cockpit.conversation.back().text += tok.text;
                             cockpit.current_action = "Streaming response...";
+                            // Keep selected_chat pointing to the latest
+                            // streaming item so auto-scroll tracks it
+                            cockpit.selected_chat = static_cast<int>(
+                                cockpit.conversation.size() - 1);
                         },
                         [&](const EvTurnComplete &done) {
                             if (!cockpit.conversation.empty()) {
-                                cockpit.conversation.back() += "\n";
+                                cockpit.conversation.back().text += "\n";
                             }
                             cockpit.current_action = "Turn complete";
                             push_log(LogKind::LLM, "Agent turn complete (" +
@@ -1940,10 +2029,19 @@ int main(int argc, char *argv[]) {
                             updated_logs = true;
                         },
                         [&](const EvToolCall &tool) {
-                            // Show tool result in conversation
-                            cockpit.conversation.push_back(
-                                "tool: [" + tool.tool_name + "] " +
-                                (tool.success ? "✓ " : "✗ ") + tool.summary);
+                            // Show tool result in conversation as collapsible
+                            std::string title_str =
+                                "[" + tool.tool_name + "] " +
+                                (tool.success ? "✓" : "✗") + " " +
+                                std::to_string(tool.summary.size()) + " chars";
+                            cockpit.conversation.push_back(ChatItem{
+                                .role = ChatRole::Tool,
+                                .title = title_str,
+                                .text = tool.summary,
+                                .collapsible = true,
+                                .expanded = false,
+                                .preview_len = 200,
+                            });
                             push_log(LogKind::Tool,
                                      tool.agent_id + " tool " + tool.tool_name +
                                          " success=" +
