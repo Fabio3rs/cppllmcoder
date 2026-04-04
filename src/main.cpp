@@ -1145,6 +1145,64 @@ int main(int argc, char *argv[]) {
     boot_log.text = "CPP-LLM-CODER cockpit initialized";
     cockpit.logs.push_back(boot_log);
 
+    // If the user requested a session restore, hydrate the chat view with
+    // previously persisted messages so the terminal shows conversation
+    // context immediately.
+    if (cfg.restore_history) {
+        const auto &restored = agent.get_history();
+
+        auto to_chat_role = [](MessageRole role) {
+            switch (role) {
+            case MessageRole::User:
+                return ChatRole::User;
+            case MessageRole::Assistant:
+                return ChatRole::Assistant;
+            case MessageRole::System:
+                return ChatRole::System;
+            case MessageRole::Tool:
+                return ChatRole::Tool;
+            }
+            return ChatRole::User;
+        };
+
+        for (const auto &msg : restored) {
+            // The system prompt can be very large; skip it to avoid flooding
+            // the chat pane while still keeping the rest of the thread.
+            if (msg.role == MessageRole::System) {
+                continue;
+            }
+
+            ChatItem item;
+            item.role = to_chat_role(msg.role);
+            item.text = msg.content;
+            if (msg.role == MessageRole::Tool) {
+                item.collapsible = true;
+                item.expanded = false;
+                item.preview_len = 200;
+                item.title = std::format("[tool] {} chars", msg.content.size());
+            }
+            cockpit.conversation.push_back(std::move(item));
+        }
+
+        if (!cockpit.conversation.empty()) {
+            cockpit.selected_chat =
+                static_cast<int>(cockpit.conversation.size()) - 1;
+            cockpit.chat_scroll_position = 1.0F;
+            cockpit.chat_auto_scroll = true;
+
+            LogLine restore_log;
+            restore_log.timestamp = std::chrono::system_clock::now();
+            restore_log.kind = LogKind::System;
+            restore_log.task_id = "T-001";
+            restore_log.session_id = cockpit.session_id;
+            restore_log.text =
+                std::format("Restored session {} ({} messages)",
+                            cockpit.session_id, cockpit.conversation.size());
+            cockpit.logs.push_back(std::move(restore_log));
+            cockpit.current_action = "Session restored from history";
+        }
+    }
+
     auto start_agent_turn = [&](const std::string &user_msg) {
         if (agent_busy.load(std::memory_order_relaxed)) {
             cockpit.current_action =
@@ -2044,18 +2102,20 @@ int main(int argc, char *argv[]) {
     });
 
     auto app = CatchEvent(root_renderer, [&](Event event) {
-        // Global help toggle first so it works even when input is focused
-        if (event == Event::F1 || event == Event::Character('?')) {
-            cockpit.show_help = !cockpit.show_help;
-            return true;
-        }
+        // Close help overlay first to keep Escape responsive.
         if (event == Event::Escape && cockpit.show_help) {
             cockpit.show_help = false;
             return true;
         }
 
-        // Forward to root (tabs/content/input) next
+        // Let the focused component (e.g., chat input) consume text input.
         if (root->OnEvent(event)) {
+            return true;
+        }
+
+        // Global help toggle (F1 always; '?' only when not swallowed above).
+        if (event == Event::F1 || event == Event::Character('?')) {
+            cockpit.show_help = !cockpit.show_help;
             return true;
         }
 
