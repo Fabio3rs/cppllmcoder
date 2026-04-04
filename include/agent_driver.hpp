@@ -37,6 +37,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
 #include <variant>
 #include <vector>
 
@@ -74,6 +75,18 @@ struct EvAgentError {
 
 using AgentEvent = std::variant<EvToken, EvTurnComplete, EvToolCall,
                                 EvAgentFinished, EvAgentError>;
+
+enum class AgentState { Running, Finished, Errored };
+
+struct AgentStatus {
+    std::string agent_id;
+    std::optional<std::string> parent_id;
+    AgentState state = AgentState::Running;
+    std::string last_error{};
+    std::chrono::milliseconds runtime_ms{0}; // steady-derived, monotonic
+    std::chrono::system_clock::time_point started_at{};
+    std::optional<std::chrono::system_clock::time_point> finished_at{};
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bus de eventos: thread-safe, drenado pela TUI na main thread
@@ -308,7 +321,7 @@ inline AutoDriver::AutoDriver(std::shared_ptr<AgentEventBus> bus,
 class AgentHandle {
   public:
     AgentHandle(std::string id, std::shared_ptr<IAgentDriver> driver,
-                std::future<std::string> result)
+                std::shared_future<std::string> result)
         : id_(std::move(id)), driver_(std::move(driver)),
           result_(std::move(result)) {}
 
@@ -336,7 +349,7 @@ class AgentHandle {
   private:
     std::string id_;
     std::shared_ptr<IAgentDriver> driver_;
-    std::future<std::string> result_;
+    std::shared_future<std::string> result_;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -344,6 +357,35 @@ class AgentHandle {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class AgentManager {
+  private:
+    struct ManagedAgentRecord {
+        std::string id;
+        std::optional<std::string> parent_id;
+        std::shared_ptr<IAgentDriver> driver;
+        std::shared_future<std::string> result;
+        AgentState state = AgentState::Running;
+        std::chrono::steady_clock::time_point started_steady{};
+        std::optional<std::chrono::steady_clock::time_point> finished_steady{};
+        std::chrono::system_clock::time_point started_at{};
+        std::optional<std::chrono::system_clock::time_point> finished_at{};
+        std::string last_error{};
+    };
+
+    AgentStatus to_status(const ManagedAgentRecord &rec) const {
+        AgentStatus st;
+        st.agent_id = rec.id;
+        st.parent_id = rec.parent_id;
+        st.state = rec.state;
+        st.last_error = rec.last_error;
+        const auto end_steady =
+            rec.finished_steady.value_or(std::chrono::steady_clock::now());
+        st.runtime_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            end_steady - rec.started_steady);
+        st.started_at = rec.started_at;
+        st.finished_at = rec.finished_at;
+        return st;
+    }
+
   public:
     explicit AgentManager(std::shared_ptr<AgentEventBus> bus)
         : bus_(std::move(bus)) {}
@@ -351,43 +393,109 @@ class AgentManager {
     // Spawna um sub-agente automático.
     // `task_fn` é o callable que roda o loop do agente — tipicamente
     // uma lambda que cria um Agent e chama agent.run(driver, initial_task).
-    AgentHandle spawn_auto(std::string agent_id, AutoDriver::Config cfg,
-                           std::function<std::string(IAgentDriver &)> task_fn) {
+    AgentHandle
+    spawn_auto(std::string agent_id, AutoDriver::Config cfg,
+               std::function<std::string(IAgentDriver &)> task_fn,
+               std::optional<std::string> parent_id = std::nullopt) {
 
         auto driver = std::make_shared<AutoDriver>(bus_, agent_id, cfg);
 
-        auto future =
-            std::async(std::launch::async,
-                       [driver, fn = std::move(task_fn), id = agent_id,
-                        bus = bus_]() mutable -> std::string {
-                           try {
-                               auto result = fn(*driver);
-                               bus->post(EvAgentFinished{id, result});
-                               return result;
-                           } catch (const std::exception &e) {
-                               bus->post(EvAgentError{id, e.what()});
-                               throw;
-                           }
-                       });
+        auto record = std::make_shared<ManagedAgentRecord>();
+        record->id = agent_id;
+        record->parent_id = std::move(parent_id);
+        record->driver = driver;
+        record->state = AgentState::Running;
+        record->started_steady = std::chrono::steady_clock::now();
+        record->started_at = std::chrono::system_clock::now();
+
+        std::weak_ptr<ManagedAgentRecord> weak_record = record;
+
+        auto future = std::async(
+            std::launch::async,
+            [driver, fn = std::move(task_fn), id = agent_id, bus = bus_,
+             weak_record]() mutable -> std::string {
+                try {
+                    auto result = fn(*driver);
+                    if (auto rec = weak_record.lock()) {
+                        rec->state = AgentState::Finished;
+                        rec->finished_steady = std::chrono::steady_clock::now();
+                        rec->finished_at = std::chrono::system_clock::now();
+                        rec->last_error.clear();
+                    }
+                    bus->post(EvAgentFinished{id, result});
+                    return result;
+                } catch (const std::exception &e) {
+                    if (auto rec = weak_record.lock()) {
+                        rec->state = AgentState::Errored;
+                        rec->finished_steady = std::chrono::steady_clock::now();
+                        rec->finished_at = std::chrono::system_clock::now();
+                        rec->last_error = e.what();
+                    }
+                    bus->post(EvAgentError{id, e.what()});
+                    throw;
+                }
+            });
+
+        auto shared_future = future.share();
+        record->result = shared_future;
+
+        {
+            std::lock_guard lock(registry_mutex_);
+            registry_[record->id] = record;
+        }
 
         return AgentHandle{std::move(agent_id), std::move(driver),
-                           std::move(future)};
+                           std::move(shared_future)};
     }
 
     // Spawna o agente interativo (apenas um por vez normalmente).
     // Retorna o driver para que a TUI possa injetar mensagens e tokens.
     std::shared_ptr<InteractiveDriver>
     spawn_interactive(std::string agent_id,
-                      std::function<void(IAgentDriver &)> task_fn) {
+                      std::function<void(IAgentDriver &)> task_fn,
+                      std::optional<std::string> parent_id = std::nullopt) {
 
         auto driver = std::make_shared<InteractiveDriver>(bus_, agent_id);
 
-        std::thread([driver, fn = std::move(task_fn), id = agent_id,
-                     bus = bus_]() mutable {
+        auto promise = std::make_shared<std::promise<std::string>>();
+        auto shared_future = promise->get_future().share();
+
+        auto record = std::make_shared<ManagedAgentRecord>();
+        record->id = agent_id;
+        record->parent_id = std::move(parent_id);
+        record->driver = driver;
+        record->result = shared_future;
+        record->state = AgentState::Running;
+        record->started_steady = std::chrono::steady_clock::now();
+        record->started_at = std::chrono::system_clock::now();
+
+        {
+            std::lock_guard lock(registry_mutex_);
+            registry_[record->id] = record;
+        }
+
+        std::thread([driver, fn = std::move(task_fn), id = agent_id, bus = bus_,
+                     promise,
+                     weak_record =
+                         std::weak_ptr<ManagedAgentRecord>(record)]() mutable {
             try {
                 fn(*driver);
+                promise->set_value({});
+                if (auto rec = weak_record.lock()) {
+                    rec->state = AgentState::Finished;
+                    rec->finished_steady = std::chrono::steady_clock::now();
+                    rec->finished_at = std::chrono::system_clock::now();
+                    rec->last_error.clear();
+                }
                 bus->post(EvAgentFinished{id, {}});
             } catch (const std::exception &e) {
+                promise->set_exception(std::current_exception());
+                if (auto rec = weak_record.lock()) {
+                    rec->state = AgentState::Errored;
+                    rec->finished_steady = std::chrono::steady_clock::now();
+                    rec->finished_at = std::chrono::system_clock::now();
+                    rec->last_error = e.what();
+                }
                 bus->post(EvAgentError{id, e.what()});
             }
         }).detach();
@@ -395,6 +503,72 @@ class AgentManager {
         return driver;
     }
 
+    // Consulta status agregado de um agente
+    std::optional<AgentStatus> status(std::string_view agent_id) const {
+        std::lock_guard lock(registry_mutex_);
+        auto it = registry_.find(std::string(agent_id));
+        if (it == registry_.end())
+            return std::nullopt;
+        return to_status(*it->second);
+    }
+
+    // Lista filhos diretos de um pai
+    std::vector<std::string> children_of(std::string_view parent_id) const {
+        std::vector<std::string> out;
+        std::lock_guard lock(registry_mutex_);
+        for (const auto &[id, rec] : registry_) {
+            if (rec->parent_id && *rec->parent_id == parent_id) {
+                out.push_back(id);
+            }
+        }
+        return out;
+    }
+
+    // Snapshot de todos os agentes conhecidos
+    std::vector<AgentStatus> list() const {
+        std::vector<AgentStatus> out;
+        std::lock_guard lock(registry_mutex_);
+        out.reserve(registry_.size());
+        for (const auto &[_, rec] : registry_) {
+            out.push_back(to_status(*rec));
+        }
+        return out;
+    }
+
+    // Injeta mensagem em um agente existente (bidirecional via driver)
+    bool inject_into(std::string_view agent_id, std::string message) const {
+        std::shared_ptr<IAgentDriver> driver;
+        {
+            std::lock_guard lock(registry_mutex_);
+            auto it = registry_.find(std::string(agent_id));
+            if (it == registry_.end())
+                return false;
+            driver = it->second->driver;
+        }
+        if (!driver)
+            return false;
+        driver->inject(std::move(message));
+        return true;
+    }
+
+    bool request_stop(std::string_view agent_id) const {
+        std::shared_ptr<IAgentDriver> driver;
+        {
+            std::lock_guard lock(registry_mutex_);
+            auto it = registry_.find(std::string(agent_id));
+            if (it == registry_.end())
+                return false;
+            driver = it->second->driver;
+        }
+        if (!driver)
+            return false;
+        driver->request_stop();
+        return true;
+    }
+
   private:
     std::shared_ptr<AgentEventBus> bus_;
+    mutable std::mutex registry_mutex_;
+    std::unordered_map<std::string, std::shared_ptr<ManagedAgentRecord>>
+        registry_;
 };

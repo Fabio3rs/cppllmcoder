@@ -45,6 +45,12 @@ class Agent {
     std::shared_ptr<IToolConsentProvider> get_consent_provider() const;
     const SessionInfo &get_session_info() const;
     const std::vector<Message> &get_history() const { return history; }
+    const std::vector<std::string> &get_child_agents() const {
+        return child_agents;
+    }
+    void register_child_agent(std::string id) {
+        child_agents.push_back(std::move(id));
+    }
 
     const app::Options &get_options() const noexcept { return options; }
 
@@ -72,6 +78,7 @@ class Agent {
     std::shared_ptr<DoneTaskSignal> done_task_signal;
     SessionInfo session_info;
     std::unique_ptr<BrainStore> brain_store;
+    std::vector<std::string> child_agents;
 
     // --- Métodos de Apoio ---
     void add_to_history(Message msg);   // Adiciona ao history e ao cache JSON
