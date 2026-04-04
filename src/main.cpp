@@ -155,7 +155,7 @@ struct CockpitState {
     int selected_diff = 0;
     bool show_inspector = true;
     bool show_help = false;
-    bool chat_auto_scroll = true; // auto-scroll chat to bottom
+    bool chat_auto_scroll = true;      // auto-scroll chat to bottom
     float chat_scroll_position = 1.0F; // 0.0 = top, 1.0 = bottom
     std::optional<std::string> next_injection;
 
@@ -1231,20 +1231,22 @@ int main(int argc, char *argv[]) {
 
     // Helper: determine role prefix color for chat lines
     auto chat_line_elements = [&](const std::string &line) -> Element {
-        // Detect role from prefix
+        // Detect role from prefix.
+        // Use flexbox so that paragraph() can word-wrap into the remaining
+        // space instead of overflowing past the right edge.
         if (line.starts_with("user: ")) {
             auto label = text("user: ") | bold | color(Color::Green);
-            auto body = paragraph(line.substr(6));
+            auto body = paragraph(line.substr(6)) | flex;
             return hbox({label, body});
         }
         if (line.starts_with("assistant: ")) {
             auto label = text("assistant: ") | bold | color(Color::Cyan);
-            auto body = paragraph(line.substr(11));
+            auto body = paragraph(line.substr(11)) | flex;
             return hbox({label, body});
         }
         if (line.starts_with("system: ")) {
             auto label = text("system: ") | bold | color(Color::Yellow);
-            auto body = paragraph(line.substr(8));
+            auto body = paragraph(line.substr(8)) | flex;
             return hbox({label, body});
         }
         if (line.starts_with("tool: ")) {
@@ -1267,7 +1269,7 @@ int main(int argc, char *argv[]) {
             } else {
                 preview = raw;
             }
-            auto body = paragraph(preview) | color(Color::GrayLight);
+            auto body = paragraph(preview) | color(Color::GrayLight) | flex;
             return hbox({label, body});
         }
         // Continuation of previous message (no prefix)
@@ -1307,14 +1309,34 @@ int main(int argc, char *argv[]) {
                       content | frame | vscroll_indicator | yframe | flex);
     });
 
-    // Scroll control: PageUp/PageDown/Arrows adjust position, End resumes
-    // auto-scroll, Home jumps to top.
+    // Scroll control: PageUp/PageDown/Arrows/Mouse-wheel adjust position,
+    // End resumes auto-scroll, Home jumps to top.
     chat_tab = CatchEvent(chat_tab, [&](Event event) {
         if (cockpit.selected_tab != 0) {
             return false;
         }
         constexpr float kLineStep = 0.03F;  // ~3 % per arrow press
         constexpr float kPageStep = 0.25F;  // ~25 % per PageUp/Down
+        constexpr float kWheelStep = 0.06F; // ~6 % per mouse wheel notch
+
+        // Mouse-wheel scroll support
+        if (event.is_mouse()) {
+            auto &m = event.mouse();
+            if (m.button == Mouse::WheelUp) {
+                cockpit.chat_auto_scroll = false;
+                cockpit.chat_scroll_position =
+                    std::max(0.0F, cockpit.chat_scroll_position - kWheelStep);
+                return true;
+            }
+            if (m.button == Mouse::WheelDown) {
+                cockpit.chat_scroll_position =
+                    std::min(1.0F, cockpit.chat_scroll_position + kWheelStep);
+                if (cockpit.chat_scroll_position >= 1.0F) {
+                    cockpit.chat_auto_scroll = true;
+                }
+                return true;
+            }
+        }
 
         if (event == Event::ArrowUp) {
             cockpit.chat_auto_scroll = false;
