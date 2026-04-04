@@ -1,11 +1,59 @@
 #include "tool_registry.hpp"
 
+#include <unordered_set>
+
 void DefaultToolRegistry::registerTool(std::shared_ptr<ITool> tool) {
     if (!tool) {
         return;
     }
     tools_[tool->describe().name] = std::move(tool);
 }
+
+namespace {
+
+std::string trim_copy(std::string_view in) {
+    size_t start = 0;
+    size_t end = in.size();
+    while (start < end && std::isspace(static_cast<unsigned char>(in[start]))) {
+        ++start;
+    }
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(in[end - 1]))) {
+        --end;
+    }
+    return std::string(in.substr(start, end - start));
+}
+
+std::vector<std::string>
+normalize_tags(const std::vector<std::string> &raw_tags) {
+    auto to_lower_local = [](std::string_view in) {
+        std::string out;
+        out.reserve(in.size());
+        for (char c : in) {
+            out.push_back(
+                static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+        }
+        return out;
+    };
+
+    std::vector<std::string> out;
+    out.reserve(raw_tags.size());
+    std::unordered_set<std::string> seen;
+
+    for (const auto &tag : raw_tags) {
+        auto trimmed = trim_copy(tag);
+        if (trimmed.empty()) {
+            continue;
+        }
+        auto lowered = to_lower_local(trimmed);
+        if (seen.insert(lowered).second) {
+            out.push_back(std::move(lowered));
+        }
+    }
+    return out;
+}
+
+} // namespace
 
 std::shared_ptr<ITool>
 DefaultToolRegistry::findTool(std::string_view name) const {
@@ -19,7 +67,9 @@ std::vector<ToolMetadata> DefaultToolRegistry::listMetadata() const {
     std::vector<ToolMetadata> metas;
     metas.reserve(tools_.size());
     for (const auto &kv : tools_) {
-        metas.push_back(kv.second->describe());
+        auto meta = kv.second->describe();
+        meta.tags = normalize_tags(meta.tags);
+        metas.push_back(std::move(meta));
     }
     return metas;
 }
@@ -28,7 +78,9 @@ void DefaultToolRegistry::forEach(
     const std::function<void(const ToolMetadata &, const ITool &)> &fn) const {
     for (const auto &kv : tools_) {
         const auto &tool = kv.second;
-        fn(tool->describe(), *tool);
+        auto meta = tool->describe();
+        meta.tags = normalize_tags(meta.tags);
+        fn(meta, *tool);
     }
 }
 
@@ -40,7 +92,8 @@ DefaultToolRegistry::topKDocs(std::string_view user_input, size_t k) const {
     scored.reserve(tools_.size());
 
     for (const auto &kv : tools_) {
-        const auto &meta = kv.second->describe();
+        auto meta = kv.second->describe();
+        meta.tags = normalize_tags(meta.tags);
         ToolDocView view{meta.name, build_signature(meta), build_brief(meta),
                          meta.is_sensitive, meta.always_show_in_prompt};
 
@@ -58,6 +111,12 @@ DefaultToolRegistry::topKDocs(std::string_view user_input, size_t k) const {
                 const auto arg_l = to_lower(arg.name);
                 if (arg_l.find(query) != std::string::npos) {
                     score += 1;
+                }
+            }
+            for (const auto &tag : meta.tags) {
+                if (tag.find(query) != std::string::npos) {
+                    score += 2;
+                    break;
                 }
             }
         }

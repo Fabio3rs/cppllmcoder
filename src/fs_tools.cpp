@@ -103,6 +103,7 @@ class FsSizeTool final : public ITool, private FsToolBase {
             .arguments = {{"path", "Path relative to workdir", "string", true}},
             .usage_example = "tools.fs.size('file.txt')",
             .returns = "integer size",
+            .tags = {"filesystem", "metadata", "read_only"},
             .danger_tags = {},
             .is_sensitive = false,
             .always_show_in_prompt = true};
@@ -162,6 +163,7 @@ class FsReadTool final : public ITool, private FsToolBase {
                            false}},
             .usage_example = "tools.fs.read('file.txt', 0, 512)",
             .returns = "table {data, bytes_read, eof}",
+            .tags = {"filesystem", "read", "read_only", "file_io"},
             .danger_tags = {},
             .is_sensitive = false,
             .always_show_in_prompt = true};
@@ -299,6 +301,7 @@ class FsListTool final : public ITool, private FsToolBase {
             .returns = "array of tables (fields: name, kind, size, mtime, "
                        "relpath) with metatable methods is_dir/is_file/"
                        "is_symlink/type() and tostring()->name, sorted",
+            .tags = {"filesystem", "read_only", "listing", "discovery"},
             .danger_tags = {},
             .is_sensitive = false,
             .always_show_in_prompt = true};

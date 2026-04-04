@@ -18,6 +18,7 @@ class DoneTaskTool final : public ITool {
             .arguments = {},
             .usage_example = "tools.done_task()",
             .returns = "string confirmation",
+            .tags = {"agent", "control", "task", "completion"},
             .danger_tags = {},
             .is_sensitive = false,
             .always_show_in_prompt = true};

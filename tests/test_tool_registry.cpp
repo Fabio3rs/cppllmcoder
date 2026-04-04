@@ -13,6 +13,7 @@ class DummyTool : public ITool {
             .arguments = {},
             .usage_example = "",
             .returns = "",
+            .tags = {},
             .danger_tags = {},
             .is_sensitive = false,
             .always_show_in_prompt = always_,
@@ -63,4 +64,44 @@ TEST(DefaultToolRegistry, SensitiveFlagPropagatesToDocView) {
     ASSERT_EQ(docs.size(), 1u);
     EXPECT_TRUE(docs[0].sensitive);
     EXPECT_EQ(docs[0].name, "secret");
+}
+
+TEST(DefaultToolRegistry, SearchMatchesTags) {
+    class TaggedTool : public DummyTool {
+      public:
+        using DummyTool::DummyTool;
+        ToolMetadata describe() const override {
+            auto meta = DummyTool::describe();
+            meta.tags = {"db", "read_only"};
+            return meta;
+        }
+    };
+
+    DefaultToolRegistry reg;
+    reg.registerTool(std::make_shared<TaggedTool>("plain_name"));
+
+    const auto docs = reg.topKDocs("db", 1);
+    ASSERT_FALSE(docs.empty());
+    EXPECT_EQ(docs[0].name, "plain_name");
+}
+
+TEST(DefaultToolRegistry, TagsAreNormalizedLowerDeduped) {
+    class MessyTagsTool : public DummyTool {
+      public:
+        using DummyTool::DummyTool;
+        ToolMetadata describe() const override {
+            auto meta = DummyTool::describe();
+            meta.tags = {" DB ", "Db", "db", "Other"};
+            return meta;
+        }
+    };
+
+    DefaultToolRegistry reg;
+    reg.registerTool(std::make_shared<MessyTagsTool>("messy"));
+
+    const auto metas = reg.listMetadata();
+    ASSERT_EQ(metas.size(), 1u);
+    ASSERT_EQ(metas[0].tags.size(), 2u);
+    EXPECT_EQ(metas[0].tags[0], "db");
+    EXPECT_EQ(metas[0].tags[1], "other");
 }

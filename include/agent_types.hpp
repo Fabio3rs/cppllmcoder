@@ -20,8 +20,10 @@ struct ToolMetadata {
     std::string name;
     std::string description{};
     std::vector<ToolArgumentMeta> arguments{};
-    std::string usage_example{};            // Exemplo curto de chamada
-    std::string returns{};                  // Descrição do retorno
+    std::string usage_example{}; // Exemplo curto de chamada
+    std::string returns{};       // Descrição do retorno
+    std::vector<std::string>
+        tags{}; // Tags normalizadas para filtragem/pontuação de busca
     std::vector<std::string> danger_tags{}; // Palavras-chave de risco
     bool is_sensitive = false; // Indica se exige consentimento explícito
     bool always_show_in_prompt = false; // Força inclusão no prompt

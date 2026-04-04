@@ -20,8 +20,8 @@ TEST(BrainStore, InsertExecutionLogReturnsId) {
     store.ensureSession(session);
 
     const auto log_id =
-        store.insertExecutionLog("task-1", session.id, "print('hi')", "out", "",
-                                 3, std::chrono::milliseconds{10});
+        store.insertExecutionLog("", session.id, "print('hi')", "out", "", 3,
+                                 std::chrono::milliseconds{10});
 
     EXPECT_GT(log_id, 0);
     EXPECT_EQ(count_rows(store.raw_db(), "execution_logs"), 1);
@@ -34,8 +34,8 @@ TEST(BrainStore, InsertPromptLogReturnsId) {
     store.ensureSession(session);
 
     const auto prompt_id = store.insertPromptLog(
-        "task-2", session.id, "system", "model", "v1", "prompt", "completion",
-        10, 9, std::chrono::milliseconds{12});
+        "", session.id, "system", "model", "v1", "prompt", "completion", 10, 9,
+        std::chrono::milliseconds{12});
 
     EXPECT_GT(prompt_id, 0);
     EXPECT_EQ(count_rows(store.raw_db(), "prompt_logs"), 1);
