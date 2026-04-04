@@ -156,6 +156,7 @@ struct CockpitState {
     bool show_inspector = true;
     bool show_help = false;
     bool chat_auto_scroll = true; // auto-scroll chat to bottom
+    float chat_scroll_position = 1.0F; // 0.0 = top, 1.0 = bottom
     std::optional<std::string> next_injection;
 
     // Dynamic state
@@ -1247,8 +1248,26 @@ int main(int argc, char *argv[]) {
             return hbox({label, body});
         }
         if (line.starts_with("tool: ")) {
-            auto label = text("tool: ") | bold | color(Color::Magenta);
-            auto body = paragraph(line.substr(6));
+            auto label = text("tool: ") | bold | color(Color::Yellow);
+            // Tools tend to produce very long output — show only a
+            // preview so the chat stays readable.
+            constexpr size_t kToolPreviewLen = 200;
+            std::string raw = line.substr(6);
+            std::string preview;
+            if (raw.size() > kToolPreviewLen) {
+                // Find the last newline within the preview window so we
+                // don't cut mid-line.
+                auto cut = raw.rfind('\n', kToolPreviewLen);
+                if (cut == std::string::npos || cut == 0) {
+                    cut = kToolPreviewLen;
+                }
+                preview = raw.substr(0, cut) + "\n  … (" +
+                          std::to_string(raw.size() - cut) +
+                          " chars truncated)";
+            } else {
+                preview = raw;
+            }
+            auto body = paragraph(preview) | color(Color::GrayLight);
             return hbox({label, body});
         }
         // Continuation of previous message (no prefix)
@@ -1276,25 +1295,63 @@ int main(int argc, char *argv[]) {
 
         auto content = vbox(std::move(lines));
 
-        // When auto-scroll is on, focus the bottom of the frame
+        // Position the scroll view according to the current scroll offset.
+        // When auto-scroll is on the position is always pinned to the bottom.
         if (cockpit.chat_auto_scroll) {
-            content = content | focusPositionRelative(0, 1);
+            cockpit.chat_scroll_position = 1.0F;
         }
+        content =
+            content | focusPositionRelative(0, cockpit.chat_scroll_position);
 
-        return window(text(" Chat/Plan "), content | frame | yframe | flex);
+        return window(text(" Chat/Plan "),
+                      content | frame | vscroll_indicator | yframe | flex);
     });
 
-    // Scroll control: PageUp/ArrowUp pauses auto-scroll, End resumes
+    // Scroll control: PageUp/PageDown/Arrows adjust position, End resumes
+    // auto-scroll, Home jumps to top.
     chat_tab = CatchEvent(chat_tab, [&](Event event) {
         if (cockpit.selected_tab != 0) {
             return false;
         }
-        if (event == Event::ArrowUp || event == Event::PageUp) {
+        constexpr float kLineStep = 0.03F;  // ~3 % per arrow press
+        constexpr float kPageStep = 0.25F;  // ~25 % per PageUp/Down
+
+        if (event == Event::ArrowUp) {
             cockpit.chat_auto_scroll = false;
-            return false; // let the frame handle the scroll
+            cockpit.chat_scroll_position =
+                std::max(0.0F, cockpit.chat_scroll_position - kLineStep);
+            return true;
+        }
+        if (event == Event::ArrowDown) {
+            cockpit.chat_scroll_position =
+                std::min(1.0F, cockpit.chat_scroll_position + kLineStep);
+            if (cockpit.chat_scroll_position >= 1.0F) {
+                cockpit.chat_auto_scroll = true;
+            }
+            return true;
+        }
+        if (event == Event::PageUp) {
+            cockpit.chat_auto_scroll = false;
+            cockpit.chat_scroll_position =
+                std::max(0.0F, cockpit.chat_scroll_position - kPageStep);
+            return true;
+        }
+        if (event == Event::PageDown) {
+            cockpit.chat_scroll_position =
+                std::min(1.0F, cockpit.chat_scroll_position + kPageStep);
+            if (cockpit.chat_scroll_position >= 1.0F) {
+                cockpit.chat_auto_scroll = true;
+            }
+            return true;
+        }
+        if (event == Event::Home) {
+            cockpit.chat_auto_scroll = false;
+            cockpit.chat_scroll_position = 0.0F;
+            return true;
         }
         if (event == Event::End) {
             cockpit.chat_auto_scroll = true;
+            cockpit.chat_scroll_position = 1.0F;
             return true;
         }
         return false;
@@ -1861,6 +1918,10 @@ int main(int argc, char *argv[]) {
                             updated_logs = true;
                         },
                         [&](const EvToolCall &tool) {
+                            // Show tool result in conversation
+                            cockpit.conversation.push_back(
+                                "tool: [" + tool.tool_name + "] " +
+                                (tool.success ? "✓ " : "✗ ") + tool.summary);
                             push_log(LogKind::Tool,
                                      tool.agent_id + " tool " + tool.tool_name +
                                          " success=" +
