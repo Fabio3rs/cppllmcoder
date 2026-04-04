@@ -58,6 +58,10 @@ class Agent {
 
     LuaContext &get_lua_context() noexcept { return luaContext; }
 
+    nlohmann::json get_messages_cache() const { return messages_cache; }
+
+    std::string prune_message(const Message &msg_ref) const;
+
   private:
     // --- Memória e Mensagens ---
     sqlite3_db_ptr brain_db;

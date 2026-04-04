@@ -9,6 +9,7 @@
 #include <openai/openai.hpp>
 #include <optional>
 #include <queue>
+#include <string>
 
 using nlohmann::json;
 
@@ -325,6 +326,75 @@ TEST(AgentRunStep, ExecutesLuaWhenCodePresent) {
     ASSERT_EQ(driver.tool_events.size(), 1u);
     EXPECT_TRUE(driver.tool_events[0].success);
     EXPECT_EQ(driver.tool_events[0].summary, "ok");
+
+    server.stop();
+}
+
+TEST(AgentRunStep, ExecutesLuaCompressOutput) {
+    test_support::MockOpenAIServer server;
+    server.setChatStreamHandler([](const json &body, httplib::Response &res) {
+        (void)body;
+        res.set_chunked_content_provider("text/event-stream", [](size_t,
+                                                                 httplib::
+                                                                     DataSink &
+                                                                         sink) {
+            std::string stream;
+            stream +=
+                "data: {\"choices\":[{\"delta\":{\"content\":\"<code>return "
+                "string.rep('a', 1024)</code>\"}}]}\n\n";
+            stream += "data: [DONE]\n\n";
+            sink.write(stream.data(), stream.size());
+            sink.done();
+            return true;
+        });
+    });
+
+    try {
+        server.start();
+    } catch (...) {
+        GTEST_SKIP() << "mock server unavailable";
+        return;
+    }
+    if (server.port() <= 0) {
+        GTEST_SKIP() << "mock server not available";
+        return;
+    }
+
+    auto opts = make_opts(":memory:", server.baseUrl() + "/v1/");
+
+    opts.max_tool_out_bytes = 256;
+
+    auto tools = std::make_shared<NullToolRegistry>();
+    auto prompts = std::make_shared<NullPromptManager>();
+    auto consent = std::make_shared<AllowAllConsent>();
+    auto logger = std::make_shared<NullLogger>();
+    auto stats = std::make_shared<CounterStats>();
+    Agent agent(opts, tools, prompts, consent, logger, stats);
+
+    openai::OpenAI openai{"dummy", "", false, server.baseUrl() + "/v1/"};
+    TestDriver driver;
+
+    const std::string reply = agent.run_step("hi", driver, openai);
+
+    EXPECT_EQ(reply, "<code>return string.rep('a', 1024)</code>");
+    ASSERT_EQ(driver.turn_complete.size(), 1u);
+    EXPECT_EQ(driver.turn_complete[0],
+              "<code>return string.rep('a', 1024)</code>");
+    ASSERT_EQ(driver.tool_events.size(), 1u);
+    EXPECT_TRUE(driver.tool_events[0].success);
+    EXPECT_FALSE(driver.tool_events[0].summary.find_first_not_of('a') !=
+                 std::string::npos)
+        << driver.tool_events[0].summary;
+
+    auto cache = agent.get_messages_cache();
+
+    auto back = cache.back();
+
+    // The tool output should be truncated in the cache
+    EXPECT_LT(back["content"].get<std::string>().size(),
+              opts.max_tool_out_bytes + 32)
+        << back["content"];
+    EXPECT_EQ(back["role"], "tool");
 
     server.stop();
 }

@@ -15,6 +15,7 @@
 #include <format>
 #include <nlohmann/json.hpp>
 #include <openai/openai.hpp>
+#include <print>
 #include <string_view>
 #include <utility>
 
@@ -412,6 +413,51 @@ void Agent::prune_context() {
 )md";
 }
 
+std::string Agent::prune_message(const Message &msg_ref) const {
+    if (msg_ref.content.size() <= options.max_tool_out_bytes) {
+        return msg_ref.content;
+    }
+
+    std::string_view view_content = msg_ref.content;
+
+    std::string_view TAG_OPEN = "<truncated>";
+    std::string_view TAG_CLOSE = "</truncated>";
+
+    if (msg_ref.id == 0) {
+        // Não tem ID?!
+        size_t total = TAG_OPEN.size() + TAG_CLOSE.size();
+        if (total > options.max_tool_out_bytes) {
+            total = 0;
+        } else {
+            total = options.max_tool_out_bytes - total;
+        }
+        return std::format("{}{}{}", TAG_OPEN, view_content.substr(0, total),
+                           TAG_CLOSE);
+    }
+
+    /**
+     * TODO: deixar dinâmico a seleção de tools
+     */
+    std::string dbtools =
+        std::format("READ IT IN BLOCKS WITH THE TOOL db.head('messages', {}, "
+                    "offset_bytes, bytes_to_read)\n",
+                    msg_ref.id);
+
+    size_t overhead = dbtools.size() + TAG_OPEN.size() + TAG_CLOSE.size() + 5;
+
+    if (overhead > options.max_tool_out_bytes) {
+        return std::format("{}...{}\n{}", TAG_OPEN, TAG_CLOSE, dbtools);
+    }
+
+    size_t msgsize = options.max_tool_out_bytes - overhead;
+
+    std::println("msg size {} overhead {}", options.max_tool_out_bytes,
+                 overhead);
+
+    return std::format("{}{}{}\n{}", TAG_OPEN, view_content.substr(0, msgsize),
+                       TAG_CLOSE, dbtools);
+}
+
 void Agent::append_to_cache(const Message &msg_ref) {
     std::string add_id;
 
@@ -419,15 +465,17 @@ void Agent::append_to_cache(const Message &msg_ref) {
         add_id = std::format("\n<id>{}</id>\n", msg_ref.id);
     }
 
+    std::string message = prune_message(msg_ref);
+
     if (!options.supports_tool_role && msg_ref.role == MessageRole::Tool) {
         auto content =
-            std::format("{}\n{}\n{}{}", TOOL_RESPONSE_TAG_OPEN, msg_ref.content,
-                        TOOL_RESPONSE_TAG_CLOSE, add_id);
+            std::format("{}\n{}\n{}{}", TOOL_RESPONSE_TAG_OPEN,
+                        std::move(message), TOOL_RESPONSE_TAG_CLOSE, add_id);
         messages_cache.push_back({{"role", "user"}, {"content", content}});
     } else {
         messages_cache.push_back(
             {{"role", msg_ref.role_to_string()},
-             {"content",
-              (add_id.empty() ? msg_ref.content : msg_ref.content + add_id)}});
+             {"content", (add_id.empty() ? std::move(message)
+                                         : std::move(message) + add_id)}});
     }
 }

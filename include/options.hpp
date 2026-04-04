@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
+
 namespace app {
 
 struct Options {
@@ -24,6 +26,11 @@ struct Options {
     bool list_sessions = false;      // Lista sessões persistidas e sai
     std::string restore_session_id;  // ID de sessão a restaurar
     bool restore_history = false;    // Recarrega histórico do DB se possível
+
+    int max_context_tokens = 1024 * 256; // Número máximo de tokens no contexto
+    float context_penalty = 0.0;         // Penalidade para tokens no contexto
+    size_t max_tool_out_bytes =
+        1024 * 32; // Número máximo de bytes na saída da ferramenta
 };
 
 } // namespace app
