@@ -13,6 +13,34 @@ static int count_rows(sqlite3 *db, const char *table) {
     return sqlite3_column_int(stmt.get(), 0);
 }
 
+TEST(BrainStore, InsertExecutionLogReturnsId) {
+    BrainStore store = BrainStore::open(":memory:", /*enable_vector=*/false);
+
+    SessionInfo session{.id = "sess-exec"};
+    store.ensureSession(session);
+
+    const auto log_id =
+        store.insertExecutionLog("task-1", session.id, "print('hi')", "out", "",
+                                 3, std::chrono::milliseconds{10});
+
+    EXPECT_GT(log_id, 0);
+    EXPECT_EQ(count_rows(store.raw_db(), "execution_logs"), 1);
+}
+
+TEST(BrainStore, InsertPromptLogReturnsId) {
+    BrainStore store = BrainStore::open(":memory:", /*enable_vector=*/false);
+
+    SessionInfo session{.id = "sess-prompt"};
+    store.ensureSession(session);
+
+    const auto prompt_id = store.insertPromptLog(
+        "task-2", session.id, "system", "model", "v1", "prompt", "completion",
+        10, 9, std::chrono::milliseconds{12});
+
+    EXPECT_GT(prompt_id, 0);
+    EXPECT_EQ(count_rows(store.raw_db(), "prompt_logs"), 1);
+}
+
 TEST(BrainStore, InsertsSessionMessageAndToolInvocation) {
     BrainStore store = BrainStore::open(":memory:", /*enable_vector=*/false);
 
@@ -39,7 +67,9 @@ TEST(BrainStore, InsertsSessionMessageAndToolInvocation) {
                 .updated_at = "t",
                 .duration = std::chrono::milliseconds{0},
                 .token_count = 0};
-    store.insertMessage(msg);
+    const auto msg_id = store.insertMessage(msg);
+    EXPECT_GT(msg_id, 0);
+    EXPECT_EQ(msg_id, msg.id);
     EXPECT_EQ(count_rows(store.raw_db(), "messages"), 1);
 
     ToolMetadata meta;
@@ -47,8 +77,10 @@ TEST(BrainStore, InsertsSessionMessageAndToolInvocation) {
     ToolInvocationContext ctx{meta, "{}", 0, std::chrono::milliseconds{0},
                               session};
     ToolDecision decision;
-    store.insertToolInvocation(ctx, decision, std::chrono::milliseconds{5},
-                               std::chrono::milliseconds{2}, true, "ok");
+    const auto tool_id =
+        store.insertToolInvocation(ctx, decision, std::chrono::milliseconds{5},
+                                   std::chrono::milliseconds{2}, true, "ok");
+    EXPECT_GT(tool_id, 0);
     EXPECT_EQ(count_rows(store.raw_db(), "tool_invocations"), 1);
 }
 
@@ -67,7 +99,7 @@ TEST(BrainStore, UpdatesExistingMessageWhenIdPresent) {
                 .duration = std::chrono::milliseconds{10},
                 .token_count = 5};
 
-    store.insertMessage(msg);
+    const auto first_id = store.insertMessage(msg);
     ASSERT_GT(msg.id, 0);
     EXPECT_EQ(count_rows(store.raw_db(), "messages"), 1);
 
@@ -76,9 +108,11 @@ TEST(BrainStore, UpdatesExistingMessageWhenIdPresent) {
     msg.content = "second";
     msg.token_count = 42;
     msg.updated_at = "t2";
-    store.insertMessage(msg);
+    const auto second_id = store.insertMessage(msg);
 
     EXPECT_EQ(msg.id, original_id);
+    EXPECT_EQ(first_id, original_id);
+    EXPECT_EQ(second_id, original_id);
     EXPECT_EQ(count_rows(store.raw_db(), "messages"), 1);
 
     auto stmt = prepare_or_throw(

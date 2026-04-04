@@ -160,7 +160,7 @@ void BrainStore::ensureTool(const ToolMetadata &meta) {
     stmt.clear();
 }
 
-void BrainStore::insertMessage(Message &msg) {
+int64_t BrainStore::insertMessage(Message &msg) {
     if (msg.id > 0) {
         // If the row already exists, perform an update to avoid duplicates.
         if (!stmt_check_message_.has_value()) {
@@ -206,16 +206,16 @@ void BrainStore::insertMessage(Message &msg) {
             upd.step();
             upd.reset();
             upd.clear();
-            return;
+            return msg.id;
         }
     }
 
-    insertMessage(static_cast<const Message &>(msg));
-    // Update msg.id with last inserted ID
-    msg.id = db_.lastInsertRowId();
+    const auto new_id = insertMessage(static_cast<const Message &>(msg));
+    msg.id = new_id;
+    return new_id;
 }
 
-void BrainStore::insertMessage(const Message &msg) {
+int64_t BrainStore::insertMessage(const Message &msg) {
     if (!stmt_insert_message_.has_value()) {
         stmt_insert_message_.emplace(db_.prepare(
             R"sql(
@@ -241,6 +241,8 @@ void BrainStore::insertMessage(const Message &msg) {
     stmt.step();
     stmt.reset();
     stmt.clear();
+
+    return db_.lastInsertRowId();
 }
 
 SessionInfo BrainStore::loadSession(std::string_view session_id) const {
@@ -325,12 +327,11 @@ std::vector<SessionSummary> BrainStore::listSessions() const {
     return out;
 }
 
-void BrainStore::insertToolInvocation(const ToolInvocationContext &ctx,
-                                      const ToolDecision &decision,
-                                      std::chrono::milliseconds duration,
-                                      std::chrono::milliseconds consent_latency,
-                                      bool success,
-                                      std::string_view result_summary) {
+int64_t BrainStore::insertToolInvocation(
+    const ToolInvocationContext &ctx, const ToolDecision &decision,
+    std::chrono::milliseconds duration,
+    std::chrono::milliseconds consent_latency, bool success,
+    std::string_view result_summary) {
     if (!stmt_insert_tool_invocation_.has_value()) {
         stmt_insert_tool_invocation_.emplace(db_.prepare(
             R"sql(
@@ -367,15 +368,17 @@ void BrainStore::insertToolInvocation(const ToolInvocationContext &ctx,
     stmt.step();
     stmt.reset();
     stmt.clear();
+
+    return db_.lastInsertRowId();
 }
 
-void BrainStore::insertExecutionLog(std::string_view task_id,
-                                    std::string_view session_id,
-                                    std::string_view lua_script,
-                                    std::string_view stdout_out,
-                                    std::string_view stderr_hints,
-                                    int tokens_used,
-                                    std::chrono::milliseconds duration) {
+int64_t BrainStore::insertExecutionLog(std::string_view task_id,
+                                       std::string_view session_id,
+                                       std::string_view lua_script,
+                                       std::string_view stdout_out,
+                                       std::string_view stderr_hints,
+                                       int tokens_used,
+                                       std::chrono::milliseconds duration) {
     if (!stmt_insert_execution_log_.has_value()) {
         stmt_insert_execution_log_.emplace(db_.prepare(
             R"sql(
@@ -400,9 +403,11 @@ void BrainStore::insertExecutionLog(std::string_view task_id,
     stmt.step();
     stmt.reset();
     stmt.clear();
+
+    return db_.lastInsertRowId();
 }
 
-void BrainStore::insertPromptLog(
+int64_t BrainStore::insertPromptLog(
     std::string_view task_id, std::string_view session_id,
     std::string_view prompt_type, std::string_view model,
     std::string_view model_version, std::string_view prompt_text,
@@ -435,4 +440,6 @@ void BrainStore::insertPromptLog(
     stmt.step();
     stmt.reset();
     stmt.clear();
+
+    return db_.lastInsertRowId();
 }

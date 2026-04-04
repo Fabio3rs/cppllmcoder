@@ -25,28 +25,29 @@ class BrainStore {
 
     std::string ensureSession(const SessionInfo &session);
     void ensureTool(const ToolMetadata &meta);
-    void insertMessage(Message &msg);
-    void insertMessage(const Message &msg);
+    int64_t insertMessage(Message &msg);
+    int64_t insertMessage(const Message &msg);
     SessionInfo loadSession(std::string_view session_id) const;
     std::vector<Message> loadMessages(std::string_view session_id) const;
     std::vector<SessionSummary> listSessions() const;
-    void insertToolInvocation(const ToolInvocationContext &ctx,
-                              const ToolDecision &decision,
-                              std::chrono::milliseconds duration,
-                              std::chrono::milliseconds consent_latency,
-                              bool success, std::string_view result_summary);
-    void insertExecutionLog(std::string_view task_id,
-                            std::string_view session_id,
-                            std::string_view lua_script,
-                            std::string_view stdout_out,
-                            std::string_view stderr_hints, int tokens_used,
-                            std::chrono::milliseconds duration);
-    void insertPromptLog(std::string_view task_id, std::string_view session_id,
-                         std::string_view prompt_type, std::string_view model,
-                         std::string_view model_version,
-                         std::string_view prompt_text,
-                         std::string_view completion_text, int token_estimate,
-                         int token_used, std::chrono::milliseconds duration);
+    int64_t insertToolInvocation(const ToolInvocationContext &ctx,
+                                 const ToolDecision &decision,
+                                 std::chrono::milliseconds duration,
+                                 std::chrono::milliseconds consent_latency,
+                                 bool success, std::string_view result_summary);
+    int64_t insertExecutionLog(std::string_view task_id,
+                               std::string_view session_id,
+                               std::string_view lua_script,
+                               std::string_view stdout_out,
+                               std::string_view stderr_hints, int tokens_used,
+                               std::chrono::milliseconds duration);
+    int64_t
+    insertPromptLog(std::string_view task_id, std::string_view session_id,
+                    std::string_view prompt_type, std::string_view model,
+                    std::string_view model_version,
+                    std::string_view prompt_text,
+                    std::string_view completion_text, int token_estimate,
+                    int token_used, std::chrono::milliseconds duration);
 
   private:
     explicit BrainStore(SqliteDb db);
