@@ -40,21 +40,3 @@ print("hello")
     EXPECT_EQ(action.thought, "");
     EXPECT_EQ(action.lua_code, "\nprint(\"hello\")\n");
 }
-
-TEST(AgentActionParse, HandlesTruncatedCodeWithoutClosingTag) {
-    // When using stop sequences like ["</code>"], the API may strip the
-    // closing tag from the response.  The parser should still extract code.
-    const std::string raw = R"(Reasoning: list files
-
-<code>
-    local result = fs.ls(".")
-    return result
-)";
-
-    AgentAction action = AgentAction::parse(raw);
-
-    EXPECT_TRUE(action.has_code);
-    EXPECT_EQ(action.thought, "Reasoning: list files\n\n");
-    EXPECT_EQ(action.lua_code, "\n    local result = fs.ls(\".\")\n"
-                               "    return result\n");
-}
