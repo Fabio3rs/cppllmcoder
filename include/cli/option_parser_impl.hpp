@@ -7,7 +7,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <format>
-#include <iostream>
+#include <print>
 #include <ranges>
 
 #include "option_parser_decls.hpp"
@@ -531,14 +531,14 @@ void CompletionHandler::suggest_options(const OptionParser<Config> &parser,
             std::string option =
                 std::string("--") + std::string(spec.long_name);
             if (prefix.empty() || option.starts_with(prefix)) {
-                std::cout << option << '\n';
+                std::print("{}\n", option);
             }
         }
         // Check short option
         if (spec.short_name != '\0') {
             std::string option = std::string("-") + spec.short_name;
             if (prefix.empty() || option.starts_with(prefix)) {
-                std::cout << option << '\n';
+                std::print("{}\n", option);
             }
         }
     }

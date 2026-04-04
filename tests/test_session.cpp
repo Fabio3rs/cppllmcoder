@@ -1,5 +1,7 @@
 #include "agent.hpp"
+#include "brain_store.hpp"
 #include <chrono>
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <memory>
 #include <string>
@@ -73,4 +75,67 @@ TEST(LoggerInterface, ReceivesSessionId) {
     EXPECT_TRUE(logger.log_tool_called);
     EXPECT_EQ(logger.last_session_id, "sess-1");
     EXPECT_EQ(logger.last_tool_name, "dummy");
+}
+
+TEST(AgentSession, RestoresHistoryFromDb) {
+    namespace fs = std::filesystem;
+    auto db_path = fs::temp_directory_path() / "cppllmcoder_restore.db";
+    std::error_code ec;
+    fs::remove(db_path, ec);
+
+    {
+        BrainStore store = BrainStore::open(db_path.string(),
+                                            /*enable_vector=*/false);
+        SessionInfo session;
+        session.id = "sess-restore";
+        session.model = "model-a";
+        session.model_version = "v1";
+        session.endpoint = "endpoint";
+        session.temperature = 0.5;
+        session.top_p = 0.9;
+        session.top_k = 40;
+        session.max_tokens = 1000;
+        session.seed = 123;
+        session.params_json = "{}";
+
+        store.ensureSession(session);
+
+        const std::string now = "2024-01-01 00:00:00.000";
+        Message sys{.id = 0,
+                    .role = MessageRole::System,
+                    .content = "sys",
+                    .session_id = session.id,
+                    .created_at = now,
+                    .updated_at = now,
+                    .duration = std::chrono::milliseconds{0},
+                    .token_count = 1};
+        Message user{.id = 0,
+                     .role = MessageRole::User,
+                     .content = "hi",
+                     .session_id = session.id,
+                     .created_at = now,
+                     .updated_at = now,
+                     .duration = std::chrono::milliseconds{0},
+                     .token_count = 2};
+        store.insertMessage(sys);
+        store.insertMessage(user);
+    }
+
+    app::Options opts;
+    opts.db_path = db_path.string();
+    opts.restore_session_id = "sess-restore";
+    opts.session_id_override = "sess-restore";
+    opts.restore_history = true;
+
+    Agent agent(opts, nullptr, nullptr, nullptr, nullptr, nullptr);
+
+    const auto &hist = agent.get_history();
+    ASSERT_EQ(hist.size(), 2);
+    EXPECT_EQ(hist[0].role, MessageRole::System);
+    EXPECT_EQ(hist[0].content, "sys");
+    EXPECT_EQ(hist[1].role, MessageRole::User);
+    EXPECT_EQ(hist[1].content, "hi");
+    EXPECT_EQ(agent.get_session_info().id, "sess-restore");
+
+    fs::remove(db_path, ec);
 }

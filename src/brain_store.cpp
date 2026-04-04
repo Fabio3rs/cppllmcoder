@@ -4,6 +4,7 @@
 #include "exe_path_utils.hpp"
 #include <filesystem>
 #include <nlohmann/json.hpp>
+#include <stdexcept>
 
 namespace {
 std::optional<std::string_view> null_if_empty(std::string_view v) {
@@ -27,6 +28,24 @@ std::string decision_to_string(ToolDecisionKind kind) {
         return "abort";
     }
     return "allow";
+}
+
+MessageRole role_from_string(std::string_view s) {
+    if (s == "system") {
+        return MessageRole::System;
+    }
+    if (s == "assistant") {
+        return MessageRole::Assistant;
+    }
+    if (s == "tool") {
+        return MessageRole::Tool;
+    }
+    return MessageRole::User;
+}
+
+std::string column_text(sqlite3_stmt *stmt, int idx) {
+    const unsigned char *raw = sqlite3_column_text(stmt, idx);
+    return raw ? reinterpret_cast<const char *>(raw) : std::string{};
 }
 } // namespace
 
@@ -222,6 +241,88 @@ void BrainStore::insertMessage(const Message &msg) {
     stmt.step();
     stmt.reset();
     stmt.clear();
+}
+
+SessionInfo BrainStore::loadSession(std::string_view session_id) const {
+    auto stmt = db_.prepare(
+        R"sql(
+        SELECT id, model, model_version, endpoint, temperature, top_p, top_k,
+               max_tokens, seed, params_json
+        FROM sessions
+        WHERE id = ? LIMIT 1;
+    )sql",
+        "load session");
+    stmt.bind(1, session_id);
+    if (stmt.step() != SQLITE_ROW) {
+        throw std::runtime_error("session not found");
+    }
+    SessionInfo info;
+    info.id = column_text(stmt.get(), 0);
+    info.model = column_text(stmt.get(), 1);
+    info.model_version = column_text(stmt.get(), 2);
+    info.endpoint = column_text(stmt.get(), 3);
+    info.temperature = sqlite3_column_double(stmt.get(), 4);
+    info.top_p = sqlite3_column_double(stmt.get(), 5);
+    info.top_k = sqlite3_column_int(stmt.get(), 6);
+    info.max_tokens = sqlite3_column_int(stmt.get(), 7);
+    info.seed = sqlite3_column_int(stmt.get(), 8);
+    info.params_json = column_text(stmt.get(), 9);
+    return info;
+}
+
+std::vector<Message>
+BrainStore::loadMessages(std::string_view session_id) const {
+    auto stmt = db_.prepare(
+        R"sql(
+        SELECT id, role, content, token_count, duration_ms,
+               created_at, updated_at
+        FROM messages
+        WHERE session_id = ?
+        ORDER BY id ASC;
+    )sql",
+        "load messages");
+    stmt.bind(1, session_id);
+
+    std::vector<Message> out;
+    while (stmt.step() == SQLITE_ROW) {
+        Message m;
+        m.id = sqlite3_column_int64(stmt.get(), 0);
+        m.role = role_from_string(column_text(stmt.get(), 1));
+        m.content = column_text(stmt.get(), 2);
+        m.token_count =
+            static_cast<unsigned int>(sqlite3_column_int(stmt.get(), 3));
+        m.duration =
+            std::chrono::milliseconds{sqlite3_column_int64(stmt.get(), 4)};
+        m.created_at = column_text(stmt.get(), 5);
+        m.updated_at = column_text(stmt.get(), 6);
+        m.session_id = std::string(session_id);
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
+std::vector<SessionSummary> BrainStore::listSessions() const {
+    auto stmt = db_.prepare(
+        R"sql(
+        SELECT s.id, s.model, s.created_at, s.updated_at,
+               COUNT(m.id) AS message_count
+        FROM sessions s
+        LEFT JOIN messages m ON m.session_id = s.id
+        GROUP BY s.id
+        ORDER BY s.updated_at DESC;
+    )sql",
+        "list sessions");
+    std::vector<SessionSummary> out;
+    while (stmt.step() == SQLITE_ROW) {
+        SessionSummary ss;
+        ss.id = column_text(stmt.get(), 0);
+        ss.model = column_text(stmt.get(), 1);
+        ss.created_at = column_text(stmt.get(), 2);
+        ss.updated_at = column_text(stmt.get(), 3);
+        ss.message_count = sqlite3_column_int(stmt.get(), 4);
+        out.push_back(std::move(ss));
+    }
+    return out;
 }
 
 void BrainStore::insertToolInvocation(const ToolInvocationContext &ctx,

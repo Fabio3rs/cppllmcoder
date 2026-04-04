@@ -1,14 +1,13 @@
 #include "sqlite3raii.hpp"
 
 #include <filesystem>
-#include <sstream>
+#include <format>
 
 namespace {
-inline void throw_with_errmsg(sqlite3 *db, const char *context) {
+[[noreturn]] inline void throw_with_errmsg(sqlite3 *db, const char *context) {
     const char *errmsg = sqlite3_errmsg(db);
-    std::ostringstream oss;
-    oss << context << ": " << (errmsg ? errmsg : "unknown sqlite error");
-    throw std::runtime_error(oss.str());
+    throw std::runtime_error(std::format(
+        "{}: {}", context, errmsg ? errmsg : "unknown sqlite error"));
 }
 } // namespace
 

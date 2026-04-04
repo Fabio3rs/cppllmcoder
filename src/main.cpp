@@ -3,6 +3,7 @@
 
 #include "agent.hpp"
 #include "agent_driver.hpp"
+#include "brain_store.hpp"
 #include "cli_options.hpp"
 #include "cockpit_agent_driver.hpp"
 #include "cockpit_consent.hpp"
@@ -14,14 +15,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <charconv>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
 #include <deque>
 #include <filesystem>
+#include <format>
 #include <functional>
-#include <iomanip>
-#include <iostream>
 #include <memory>
 #include <mutex>
 #include <openai/openai.hpp>
@@ -31,7 +32,6 @@
 #include <ranges>
 #include <span>
 #include <sqlite3.h>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -275,6 +275,20 @@ Color log_color(LogKind kind) {
     return Color::White;
 }
 
+void print_session_table(const std::vector<SessionSummary> &sessions) {
+    if (sessions.empty()) {
+        std::print("no sessions found\n");
+        return;
+    }
+
+    std::print("{:<38}{:<24}{:<18}{}\n", "id", "updated_at", "model",
+               "messages");
+    for (const auto &s : sessions) {
+        std::print("{:<38}{:<24}{:<18}{}\n", s.id, s.updated_at, s.model,
+                   s.message_count);
+    }
+}
+
 std::string log_kind_label(LogKind kind) {
     switch (kind) {
     case LogKind::System:
@@ -337,26 +351,68 @@ std::string detect_git_branch() {
 
 std::chrono::system_clock::time_point
 parse_sqlite_timestamp(std::string_view ts) {
-    // Expected format: YYYY-MM-DD HH:MM:SS.sss
-    std::tm tm{};
-    std::istringstream ss{std::string(ts)};
-    ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
-    if (ss.fail()) {
-        return std::chrono::system_clock::now();
+    constexpr size_t base_len = 19; // "YYYY-MM-DD HH:MM:SS"
+    auto now = std::chrono::system_clock::now();
+
+    auto parse_int = [](std::string_view v) -> std::optional<int> {
+        int value = 0;
+        auto res = std::from_chars(v.data(), v.data() + v.size(), value);
+        if (res.ec != std::errc{}) {
+            return std::nullopt;
+        }
+        return value;
+    };
+
+    if (ts.size() < base_len) {
+        return now;
     }
+
+    auto valid_separators = [](std::string_view str) {
+        return str[4] == '-' && str[7] == '-' && str[10] == ' ' &&
+               str[13] == ':' && str[16] == ':';
+    };
+
+    if (!valid_separators(ts)) {
+        return now;
+    }
+
+    auto year = parse_int(ts.substr(0, 4));
+    auto month = parse_int(ts.substr(5, 2));
+    auto day = parse_int(ts.substr(8, 2));
+    auto hour = parse_int(ts.substr(11, 2));
+    auto minute = parse_int(ts.substr(14, 2));
+    auto second = parse_int(ts.substr(17, 2));
+
+    if (!year || !month || !day || !hour || !minute || !second) {
+        return now;
+    }
+
+    std::tm tm{};
+    tm.tm_year = *year - 1900;
+    tm.tm_mon = *month - 1;
+    tm.tm_mday = *day;
+    tm.tm_hour = *hour;
+    tm.tm_min = *minute;
+    tm.tm_sec = *second;
+
     auto time_c = std::chrono::system_clock::from_time_t(std::mktime(&tm));
-    // Parse fractional seconds if present
-    auto dot_pos = ts.find('.');
-    if (dot_pos != std::string_view::npos && dot_pos + 1 < ts.size()) {
-        std::string_view frac = ts.substr(dot_pos + 1);
+
+    if (ts.size() > base_len && ts[base_len] == '.') {
+        const size_t frac_start = base_len + 1;
+        const size_t frac_len = std::min<size_t>(3, ts.size() - frac_start);
+        auto frac = ts.substr(frac_start, frac_len);
         int ms = 0;
-        for (size_t i = 0; i < std::min<size_t>(3, frac.size()); ++i) {
-            if (std::isdigit(static_cast<unsigned char>(frac[i]))) {
-                ms = ms * 10 + (frac[i] - '0');
+        if (auto parsed = parse_int(frac)) {
+            ms = *parsed;
+            if (frac_len == 1) {
+                ms *= 100;
+            } else if (frac_len == 2) {
+                ms *= 10;
             }
         }
         time_c += std::chrono::milliseconds(ms);
     }
+
     return time_c;
 }
 
@@ -504,11 +560,7 @@ std::vector<PointerItem> load_pointers_from_db(const std::string &db_path) {
         ptr.summary = cstr(1);
         std::string file_path = cstr(2);
         int offset_start = sqlite3_column_int(stmt.get(), 3);
-        ptr.source = file_path + ":0x" + ([](int v) {
-                         std::ostringstream ss;
-                         ss << std::hex << std::uppercase << v;
-                         return ss.str();
-                     })(offset_start);
+        ptr.source = std::format("{}:0x{:X}", file_path, offset_start);
         ptr.last_updated = cstr(5);
         pointers.push_back(std::move(ptr));
     }
@@ -602,15 +654,26 @@ std::vector<DiffHunk> load_diff_from_git() {
     }
     pclose(pipe);
 
-    std::istringstream iss(output);
-    std::string line;
     DiffHunk current;
     bool in_hunk = false;
-    while (std::getline(iss, line)) {
+    std::string_view content{output};
+    size_t pos = 0;
+
+    auto push_current = [&]() {
+        if (in_hunk && !current.file_path.empty()) {
+            hunks.push_back(current);
+        }
+    };
+
+    while (pos <= content.size()) {
+        size_t next = content.find('\n', pos);
+        std::string_view line_view = next == std::string_view::npos
+                                         ? content.substr(pos)
+                                         : content.substr(pos, next - pos);
+        std::string line{line_view};
+
         if (line.starts_with("diff --git ")) {
-            if (in_hunk && !current.file_path.empty()) {
-                hunks.push_back(current);
-            }
+            push_current();
             current = DiffHunk{};
             in_hunk = true;
             // extract file path after b/
@@ -625,10 +688,14 @@ std::vector<DiffHunk> load_diff_from_git() {
         } else if (in_hunk) {
             current.lines.push_back(line);
         }
+
+        if (next == std::string_view::npos) {
+            break;
+        }
+        pos = next + 1;
     }
-    if (in_hunk && !current.file_path.empty()) {
-        hunks.push_back(current);
-    }
+
+    push_current();
     return hunks;
 }
 
@@ -942,11 +1009,11 @@ int main(int argc, char *argv[]) {
 
     switch (result.status) {
     case cli::ParseStatus::ShowHelp:
-        std::cout << parser.generate_help(argv[0]);
+        std::print("{}", parser.generate_help(argv[0]));
         return 0;
 
     case cli::ParseStatus::ShowHelpVerbose:
-        std::cout << parser.generate_help_verbose(argv[0]);
+        std::print("{}", parser.generate_help_verbose(argv[0]));
         return 0;
 
     case cli::ParseStatus::ShowVersion:
@@ -958,8 +1025,8 @@ int main(int argc, char *argv[]) {
         return 0;
 
     case cli::ParseStatus::Error:
-        std::cerr << "Erro: " << result.error_message << "\n";
-        std::cerr << "Use --help para ver as opções disponíveis.\n";
+        std::print(stderr, "Erro: {}\n", result.error_message);
+        std::print(stderr, "Use --help para ver as opções disponíveis.\n");
         return 1;
 
     case cli::ParseStatus::Ok:
@@ -971,6 +1038,19 @@ int main(int argc, char *argv[]) {
     if (cfg.workdir.empty()) {
         cfg.workdir =
             std::filesystem::absolute(std::filesystem::current_path()).string();
+    }
+
+    if (cfg.list_sessions) {
+        try {
+            BrainStore store =
+                BrainStore::open(cfg.db_path, /*enable_vector=*/false);
+            auto sessions = store.listSessions();
+            print_session_table(sessions);
+            return 0;
+        } catch (const std::exception &ex) {
+            std::print(stderr, "Erro ao listar sessões: {}\n", ex.what());
+            return 1;
+        }
     }
 
     // Build runtime defaults (tools, prompt manager, consent, logger, stats)

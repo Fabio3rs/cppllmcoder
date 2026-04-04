@@ -1,8 +1,7 @@
 #pragma once
 
-#include <iomanip>
+#include <format>
 #include <random>
-#include <sstream>
 #include <string>
 
 namespace utils {
@@ -13,10 +12,7 @@ inline std::string generate_uuid_v4() {
     auto rand64 = [&]() { return gen(); };
 
     auto to_hex = [](uint64_t value, size_t width) {
-        std::ostringstream oss;
-        oss << std::hex << std::setw(static_cast<int>(width))
-            << std::setfill('0') << value;
-        return oss.str();
+        return std::format("{:0{}X}", value, width);
     };
 
     uint64_t high = rand64();
@@ -28,13 +24,11 @@ inline std::string generate_uuid_v4() {
     low &= 0x3FFFFFFFFFFFFFFFULL;
     low |= 0x8000000000000000ULL;
 
-    std::ostringstream uuid;
-    uuid << to_hex((high >> 32) & 0xFFFFFFFFULL, 8) << "-"
-         << to_hex((high >> 16) & 0xFFFFULL, 4) << "-"
-         << to_hex(high & 0xFFFFULL, 4) << "-"
-         << to_hex((low >> 48) & 0xFFFFULL, 4) << "-"
-         << to_hex(low & 0xFFFFFFFFFFFFULL, 12);
-    return uuid.str();
+    return std::format(
+        "{}-{}-{}-{}-{}", to_hex((high >> 32) & 0xFFFFFFFFULL, 8),
+        to_hex((high >> 16) & 0xFFFFULL, 4), to_hex(high & 0xFFFFULL, 4),
+        to_hex((low >> 48) & 0xFFFFULL, 4),
+        to_hex(low & 0xFFFFFFFFFFFFULL, 12));
 }
 
 } // namespace utils

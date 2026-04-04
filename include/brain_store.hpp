@@ -7,6 +7,15 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
+
+struct SessionSummary {
+    std::string id;
+    std::string model;
+    std::string created_at;
+    std::string updated_at;
+    int message_count = 0;
+};
 
 class BrainStore {
   public:
@@ -18,6 +27,9 @@ class BrainStore {
     void ensureTool(const ToolMetadata &meta);
     void insertMessage(Message &msg);
     void insertMessage(const Message &msg);
+    SessionInfo loadSession(std::string_view session_id) const;
+    std::vector<Message> loadMessages(std::string_view session_id) const;
+    std::vector<SessionSummary> listSessions() const;
     void insertToolInvocation(const ToolInvocationContext &ctx,
                               const ToolDecision &decision,
                               std::chrono::milliseconds duration,

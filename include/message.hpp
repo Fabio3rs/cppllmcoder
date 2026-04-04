@@ -19,7 +19,7 @@ struct Message {
     std::string updated_at;             // ISO8601 com ms (persistido no DB)
     std::chrono::milliseconds duration; // Tempo gasto para gerar a resposta
                                         // (útil para análise de performance)
-    int token_count = 0;                // Cache para não recontar toda hora
+    unsigned int token_count = 0;       // Cache para não recontar toda hora
 
     // Converte MessageRole para string que o Ollama/OpenAI entende
     std::string role_to_string() const {
@@ -32,8 +32,8 @@ struct Message {
             return "assistant";
         case MessageRole::Tool:
             return "tool";
-        default:
-            return "user";
         }
+
+        return "user";
     }
 };

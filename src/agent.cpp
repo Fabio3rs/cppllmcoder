@@ -9,7 +9,10 @@
 #include "time_utils.hpp"
 #include "uuid_utils.hpp"
 #include <cctype>
+#include <cstddef>
 #include <cstdio>
+#include <exception>
+#include <format>
 #include <nlohmann/json.hpp>
 #include <openai/openai.hpp>
 #include <string_view>
@@ -66,6 +69,26 @@ Agent::Agent(const app::Options &opts, std::shared_ptr<ToolRegistry> tools,
     brain_store =
         std::make_unique<BrainStore>(BrainStore::open(options.db_path));
     brain_store->ensureSession(session_info);
+
+    if (options.restore_history && brain_store) {
+        try {
+            session_info = brain_store->loadSession(session_info.id);
+            history = brain_store->loadMessages(session_info.id);
+            messages_cache.clear();
+            total_tokens = 0;
+            for (const auto &msg : history) {
+                append_to_cache(msg);
+                total_tokens += static_cast<size_t>(msg.token_count);
+            }
+            if (stats_recorder && total_tokens > 0) {
+                stats_recorder->incrementTokenCount(
+                    static_cast<int>(total_tokens));
+            }
+        } catch (const std::exception &ex) {
+            std::fprintf(stderr, "[agent] failed to restore session '%s': %s\n",
+                         session_info.id.c_str(), ex.what());
+        }
+    }
 
     if (tool_registry) {
         auto toolInvocationHandler =
@@ -261,7 +284,8 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
             .created_at = to_iso8601_ms(now_after),
             .updated_at = to_iso8601_ms(now_after),
             .duration = duration,
-            .token_count = usage.total_tokens >= 0 ? usage.total_tokens : 0};
+            .token_count = static_cast<unsigned int>(
+                usage.total_tokens >= 0 ? usage.total_tokens : 0)};
         add_to_history(assistant_msg);
 
         if (stats_recorder && usage.total_tokens >= 0) {
@@ -375,18 +399,23 @@ void Agent::persist_message(Message &msg) {
 void Agent::add_to_history(Message msg) {
     history.emplace_back(std::move(msg));
     persist_message(history.back()); // Updates the ID in history.back()
+    append_to_cache(history.back());
+}
 
+void Agent::prune_context() {
+    // When implementing pruning, remember to:
+    // messages_cache.erase(messages_cache.begin(), messages_cache.begin() + N);
+
+    [[maybe_unused]] constexpr std::string_view prompt_for_compression =
+        R"md(### Context compression instructions
+            ....
+)md";
+}
+
+void Agent::append_to_cache(const Message &msg_ref) {
     std::string add_id;
 
-    // Update JSON cache using the now-updated message
-    const auto &msg_ref = history.back();
     if (msg_ref.id != 0) {
-        /**
-         * Add the message ID to the response
-         * This allows the user to reference the specific message in follow-up
-         * queries. Also, it helps in tracking the conversation history more
-         * effectively.
-         */
         add_id = std::format("\n<id>{}</id>\n", msg_ref.id);
     }
 
@@ -401,14 +430,4 @@ void Agent::add_to_history(Message msg) {
              {"content",
               (add_id.empty() ? msg_ref.content : msg_ref.content + add_id)}});
     }
-}
-
-void Agent::prune_context() {
-    // When implementing pruning, remember to:
-    // messages_cache.erase(messages_cache.begin(), messages_cache.begin() + N);
-
-    [[maybe_unused]] constexpr std::string_view prompt_for_compression =
-        R"md(### Context compression instructions
-            ....
-)md";
 }

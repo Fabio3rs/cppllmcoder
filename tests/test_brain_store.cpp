@@ -1,5 +1,6 @@
 #include "brain_store.hpp"
 #include "sqlite3raii.hpp"
+#include <algorithm>
 #include <gtest/gtest.h>
 
 static int count_rows(sqlite3 *db, const char *table) {
@@ -89,4 +90,41 @@ TEST(BrainStore, UpdatesExistingMessageWhenIdPresent) {
         reinterpret_cast<const char *>(sqlite3_column_text(stmt.get(), 0)),
         std::string("second"));
     EXPECT_EQ(sqlite3_column_int(stmt.get(), 1), 42);
+}
+
+TEST(BrainStore, ListsSessionsWithMessageCounts) {
+    BrainStore store = BrainStore::open(":memory:", /*enable_vector=*/false);
+
+    SessionInfo s1{.id = "s1", .model = "m1", .params_json = "{}"};
+    SessionInfo s2{.id = "s2", .model = "m2", .params_json = "{}"};
+    store.ensureSession(s1);
+    store.ensureSession(s2);
+
+    Message m1{.id = 0,
+               .role = MessageRole::User,
+               .content = "hello",
+               .session_id = s1.id,
+               .created_at = "t1",
+               .updated_at = "t1",
+               .duration = std::chrono::milliseconds{0},
+               .token_count = 1};
+    Message m2 = m1;
+    m2.session_id = s2.id;
+    store.insertMessage(m1);
+    store.insertMessage(m2);
+
+    auto sessions = store.listSessions();
+    ASSERT_EQ(sessions.size(), 2);
+
+    auto find_by_id = [&](const std::string &id) {
+        return std::find_if(
+            sessions.begin(), sessions.end(),
+            [&](const SessionSummary &s) { return s.id == id; });
+    };
+    auto it1 = find_by_id("s1");
+    auto it2 = find_by_id("s2");
+    ASSERT_NE(it1, sessions.end());
+    ASSERT_NE(it2, sessions.end());
+    EXPECT_EQ(it1->message_count, 1);
+    EXPECT_EQ(it2->message_count, 1);
 }

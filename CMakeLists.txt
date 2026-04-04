@@ -44,7 +44,7 @@ elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "MSVC")
     add_compile_options(/W4 /WX)
 elseif (${CMAKE_CXX_COMPILER_ID} STREQUAL "Clang")
     message(STATUS "Setting Clang flags")
-    add_compile_options(-Werror -Weverything -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-padded -Wno-global-constructors -Wno-exit-time-destructors -Wno-weak-vtables -Wno-documentation -Wno-documentation-unknown-command)
+    add_compile_options(-Werror -Weverything -Wno-c++98-compat -Wno-c++98-compat-pedantic -Wno-padded -Wno-global-constructors -Wno-switch-default -Wno-unreachable-code-return -Wno-ctad-maybe-unsupported -Wno-exit-time-destructors -Wno-weak-vtables -Wno-documentation -Wno-documentation-unknown-command)
 endif()
 
 if(ENABLE_TESTS)
