@@ -439,9 +439,10 @@ std::string Agent::prune_message(const Message &msg_ref) const {
      * TODO: deixar dinâmico a seleção de tools
      */
     std::string dbtools =
-        std::format("READ IT IN BLOCKS WITH THE TOOL db.head('messages', {}, "
+        std::format("TOTAL IN BYTES ORIGINAL: {}\n READ IT IN BLOCKS WITH THE "
+                    "TOOL(S):\ndb.head('messages', {}, 'content', "
                     "offset_bytes, bytes_to_read)\n",
-                    msg_ref.id);
+                    msg_ref.content.size(), msg_ref.id);
 
     size_t overhead = dbtools.size() + TAG_OPEN.size() + TAG_CLOSE.size() + 5;
 

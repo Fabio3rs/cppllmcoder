@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent.hpp"
+#include "brain_store.hpp"
 #include "counter_stats.hpp"
 #include "done_task_tool.hpp"
 #include "file_execution_logger.hpp"
@@ -15,6 +16,7 @@ struct RuntimeDefaults {
     std::shared_ptr<IToolConsentProvider> consent;
     std::shared_ptr<IExecutionLogger> logger;
     std::shared_ptr<IStatsRecorder> stats;
+    std::shared_ptr<BrainStore> brain_store; // keeps DB alive for db.* tools
 };
 
 // Build default runtime dependencies for the CLI PoC.
