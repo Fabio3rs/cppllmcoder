@@ -4,6 +4,10 @@
 #include "llm_chat_streamer.hpp"
 #include "mock_openai_server.hpp"
 
+extern "C" {
+#include <utf8proc.h>
+}
+
 #include <atomic>
 #include <nlohmann/json.hpp>
 #include <openai/openai.hpp>
@@ -134,6 +138,23 @@ app::Options make_opts(std::string db_path, const std::string &endpoint) {
     opts.model = "mock-model";
     opts.max_iterations = 1;
     return opts;
+}
+
+bool is_valid_utf8(std::string_view text) {
+    const auto *ptr = reinterpret_cast<const utf8proc_uint8_t *>(text.data());
+    utf8proc_ssize_t remaining = static_cast<utf8proc_ssize_t>(text.size());
+
+    while (remaining > 0) {
+        utf8proc_int32_t codepoint = 0;
+        const utf8proc_ssize_t size =
+            utf8proc_iterate(ptr, remaining, &codepoint);
+        if (size <= 0) {
+            return false;
+        }
+        ptr += size;
+        remaining -= size;
+    }
+    return true;
 }
 
 } // namespace
@@ -395,6 +416,61 @@ TEST(AgentRunStep, ExecutesLuaCompressOutput) {
               opts.max_tool_out_bytes + 32)
         << back["content"];
     EXPECT_EQ(back["role"], "tool");
+
+    server.stop();
+}
+
+TEST(AgentRunStep, CompressesUnicodeToolOutputWithoutBreakingUtf8) {
+    test_support::MockOpenAIServer server;
+    server.setChatStreamHandler([](const json &body, httplib::Response &res) {
+        (void)body;
+        res.set_chunked_content_provider("text/event-stream", [](size_t,
+                                                                 httplib::
+                                                                     DataSink &
+                                                                         sink) {
+            std::string stream;
+            stream +=
+                "data: {\"choices\":[{\"delta\":{\"content\":\"<code>return "
+                "string.rep('\xF0\x9F\x98\x80', 256)</code>\"}}]}\n\n";
+            stream += "data: [DONE]\n\n";
+            sink.write(stream.data(), stream.size());
+            sink.done();
+            return true;
+        });
+    });
+
+    try {
+        server.start();
+    } catch (...) {
+        GTEST_SKIP() << "mock server unavailable";
+        return;
+    }
+    if (server.port() <= 0) {
+        GTEST_SKIP() << "mock server not available";
+        return;
+    }
+
+    auto opts = make_opts(":memory:", server.baseUrl() + "/v1/");
+    opts.max_tool_out_bytes = 128;
+
+    auto tools = std::make_shared<NullToolRegistry>();
+    auto prompts = std::make_shared<NullPromptManager>();
+    auto consent = std::make_shared<AllowAllConsent>();
+    auto logger = std::make_shared<NullLogger>();
+    auto stats = std::make_shared<CounterStats>();
+    Agent agent(opts, tools, prompts, consent, logger, stats);
+
+    openai::OpenAI openai{"dummy", "", false, server.baseUrl() + "/v1/"};
+    TestDriver driver;
+
+    (void)agent.run_step("hi", driver, openai);
+
+    const auto cache = agent.get_messages_cache();
+    const auto back = cache.back();
+    const auto content = back["content"].get<std::string>();
+
+    EXPECT_EQ(back["role"], "tool");
+    EXPECT_TRUE(is_valid_utf8(content)) << content;
 
     server.stop();
 }

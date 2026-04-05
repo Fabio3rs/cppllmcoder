@@ -1,4 +1,5 @@
 #include "prompt_consent.hpp"
+#include "utils/utf8_text.hpp"
 
 #include <iomanip>
 #include <iostream>
@@ -12,7 +13,7 @@ bool is_yes(const std::string &s) {
 
 std::string summarize_args(const ToolInvocationContext &ctx) {
     if (ctx.json_args.size() > 200) {
-        return ctx.json_args.substr(0, 200) + "...";
+        return utf8::truncate_for_display(ctx.json_args, 200);
     }
     return ctx.json_args;
 }

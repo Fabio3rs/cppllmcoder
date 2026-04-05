@@ -10,6 +10,7 @@
 #include "done_task_tool.hpp"
 #include "runtime_defaults.hpp"
 #include "sqlite3raii.hpp"
+#include "utils/utf8_text.hpp"
 
 #include "getenv.hpp"
 #include <algorithm>
@@ -1125,8 +1126,8 @@ int main(int argc, char *argv[]) {
             if (!ctx.metadata.danger_tags.empty()) {
                 approval.risk = "medium";
             }
-            approval.details = ctx.json_args.substr(
-                0, std::min<size_t>(ctx.json_args.size(), 120));
+            approval.details =
+                std::string(utf8::prefix_by_bytes(ctx.json_args, 120));
             approval.action_id = approval_id;
             {
                 std::lock_guard lock(event_mutex);
@@ -1179,7 +1180,7 @@ int main(int argc, char *argv[]) {
                 item.collapsible = true;
                 item.expanded = false;
                 item.preview_len = 200;
-                item.title = std::format("[tool] {} chars", msg.content.size());
+                item.title = std::format("[tool] {} bytes", msg.content.size());
             }
             cockpit.conversation.push_back(std::move(item));
         }
@@ -1421,7 +1422,7 @@ int main(int argc, char *argv[]) {
 
         // Collapsible item (typically tool results)
         std::string header_text =
-            item.title.empty() ? (std::to_string(item.text.size()) + " chars")
+            item.title.empty() ? (std::to_string(item.text.size()) + " bytes")
                                : item.title;
 
         auto marker = item.expanded ? "[-] " : "[+] ";
@@ -1435,18 +1436,19 @@ int main(int argc, char *argv[]) {
         if (item.expanded) {
             body = paragraph(item.text) | color(Color::GrayLight);
         } else {
-            std::string preview = item.text;
-            if (static_cast<int>(preview.size()) > item.preview_len) {
+            std::string preview(item.text);
+            if (static_cast<int>(item.text.size()) > item.preview_len) {
+                preview = std::string(utf8::prefix_by_bytes(
+                    item.text, static_cast<size_t>(item.preview_len)));
                 // Find the last newline within the preview window so we
                 // don't cut mid-line.
-                auto cut =
-                    preview.rfind('\n', static_cast<size_t>(item.preview_len));
+                auto cut = preview.rfind('\n');
                 if (cut == std::string::npos || cut == 0) {
-                    cut = static_cast<size_t>(item.preview_len);
+                    cut = preview.size();
                 }
+                const size_t omitted_bytes = item.text.size() - cut;
                 preview = preview.substr(0, cut) + "\n  … (" +
-                          std::to_string(item.text.size() - cut) +
-                          " chars truncated)";
+                          std::to_string(omitted_bytes) + " bytes truncated)";
             }
             body = paragraph(preview) | color(Color::GrayDark);
         }
@@ -2173,7 +2175,7 @@ int main(int argc, char *argv[]) {
                             std::string title_str =
                                 "[" + tool.tool_name + "] " +
                                 (tool.success ? "✓" : "✗") + " " +
-                                std::to_string(tool.summary.size()) + " chars";
+                                std::to_string(tool.summary.size()) + " bytes";
                             cockpit.conversation.push_back(ChatItem{
                                 .role = ChatRole::Tool,
                                 .title = title_str,

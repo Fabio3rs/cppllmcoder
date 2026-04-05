@@ -12,6 +12,7 @@ add_executable(cppllmcoder_tests
     test_agent_run_step.cpp
     test_fs_tools.cpp
     test_db_tools.cpp
+    test_utf8_text.cpp
 )
 target_compile_definitions(cppllmcoder_tests PRIVATE "CMAKE_SOURCE_DIR=\"${CMAKE_SOURCE_DIR}\"")
 target_link_libraries(cppllmcoder_tests cppllmcoder_lib GTest::GTest GTest::Main)

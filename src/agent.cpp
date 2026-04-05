@@ -7,7 +7,7 @@
 #include "json_utils.hpp"
 #include "llm_chat_streamer.hpp"
 #include "time_utils.hpp"
-#include "utils/simple_utf8view.hpp"
+#include "utils/utf8_text.hpp"
 #include "uuid_utils.hpp"
 #include <cctype>
 #include <cstddef>
@@ -152,7 +152,7 @@ Agent::Agent(const app::Options &opts, std::shared_ptr<ToolRegistry> tools,
                 }
                 }
                 if (summary.size() > 200) {
-                    summary.resize(200);
+                    summary = std::string(utf8::prefix_by_bytes(summary, 200));
                 }
             } else {
                 summary = result.error();
@@ -419,8 +419,6 @@ std::string Agent::prune_message(const Message &msg_ref) const {
         return msg_ref.content;
     }
 
-    utf8::string_view_utf8 view_content(std::string_view(msg_ref.content));
-
     std::string_view TAG_OPEN = "<truncated>";
     std::string_view TAG_CLOSE = "</truncated>";
 
@@ -432,8 +430,9 @@ std::string Agent::prune_message(const Message &msg_ref) const {
         } else {
             total = options.max_tool_out_bytes - total;
         }
-        return std::format("{}{}{}", TAG_OPEN, view_content.substr(0, total),
-                           TAG_CLOSE);
+        const auto safe_prefix =
+            utf8::prefix_by_bytes(std::string_view(msg_ref.content), total);
+        return std::format("{}{}{}", TAG_OPEN, safe_prefix, TAG_CLOSE);
     }
 
     /**
@@ -456,8 +455,9 @@ std::string Agent::prune_message(const Message &msg_ref) const {
     std::println("msg size {} overhead {}", options.max_tool_out_bytes,
                  overhead);
 
-    return std::format("{}{}{}\n{}", TAG_OPEN, view_content.substr(0, msgsize),
-                       TAG_CLOSE, dbtools);
+    const auto safe_prefix =
+        utf8::prefix_by_bytes(std::string_view(msg_ref.content), msgsize);
+    return std::format("{}{}{}\n{}", TAG_OPEN, safe_prefix, TAG_CLOSE, dbtools);
 }
 
 void Agent::append_to_cache(const Message &msg_ref) {

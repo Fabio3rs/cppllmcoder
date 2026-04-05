@@ -119,3 +119,68 @@ TEST(DbHeadTool, RejectsUnexpectedTableAndColumn) {
                   std::string::npos);
     }
 }
+
+TEST(DbHeadTool, PreservesUtf8BoundariesWithinBudget) {
+    DbFixture fx;
+    const auto row_id = fx.insert("a"
+                                  "\xC3\xA9"
+                                  "\xF0\x9F\x98\x80"
+                                  "b");
+
+    auto reg = std::make_shared<DefaultToolRegistry>();
+    registerBrainDbTools(*reg, fx.db.get(), /*max_read_bytes=*/5);
+    LuaContext lua;
+    lua.bindTools(*reg);
+
+    auto script = std::format(
+        "return tools.db.head('messages', {}, 'content', 0, 5)", row_id);
+    const auto j = exec_json(lua, script);
+
+    EXPECT_EQ(j["data"], "a"
+                         "\xC3\xA9");
+    EXPECT_EQ(j["bytes_read"], 3);
+    EXPECT_FALSE(j["eof"].get<bool>());
+}
+
+TEST(DbHeadTool, RealignsOffsetInsideUtf8Sequence) {
+    DbFixture fx;
+    const auto row_id = fx.insert("a"
+                                  "\xC3\xA9"
+                                  "\xF0\x9F\x98\x80"
+                                  "b");
+
+    auto reg = std::make_shared<DefaultToolRegistry>();
+    registerBrainDbTools(*reg, fx.db.get(), /*max_read_bytes=*/8);
+    LuaContext lua;
+    lua.bindTools(*reg);
+
+    auto script = std::format(
+        "return tools.db.head('messages', {}, 'content', 2, 8)", row_id);
+    const auto j = exec_json(lua, script);
+
+    EXPECT_EQ(j["data"], "\xF0\x9F\x98\x80"
+                         "b");
+    EXPECT_EQ(j["bytes_read"], 5);
+    EXPECT_TRUE(j["eof"].get<bool>());
+}
+
+TEST(DbHeadTool, ReturnsWholeGraphemeWhenBudgetCannotFitFirstOne) {
+    DbFixture fx;
+    const auto row_id = fx.insert("e"
+                                  "\xCC\x81"
+                                  "x");
+
+    auto reg = std::make_shared<DefaultToolRegistry>();
+    registerBrainDbTools(*reg, fx.db.get(), /*max_read_bytes=*/2);
+    LuaContext lua;
+    lua.bindTools(*reg);
+
+    auto script = std::format(
+        "return tools.db.head('messages', {}, 'content', 0, 2)", row_id);
+    const auto j = exec_json(lua, script);
+
+    EXPECT_EQ(j["data"], "e"
+                         "\xCC\x81");
+    EXPECT_EQ(j["bytes_read"], 3);
+    EXPECT_FALSE(j["eof"].get<bool>());
+}

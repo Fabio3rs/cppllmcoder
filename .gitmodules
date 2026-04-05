@@ -13,3 +13,6 @@
 [submodule "tests/vendor/cpp-httplib"]
 	path = tests/vendor/cpp-httplib
 	url = https://github.com/yhirose/cpp-httplib.git
+[submodule "vendor/utf8proc"]
+	path = vendor/utf8proc
+	url = https://github.com/JuliaStrings/utf8proc.git
