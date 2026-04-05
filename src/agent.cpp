@@ -452,9 +452,6 @@ std::string Agent::prune_message(const Message &msg_ref) const {
 
     size_t msgsize = options.max_tool_out_bytes - overhead;
 
-    std::println("msg size {} overhead {}", options.max_tool_out_bytes,
-                 overhead);
-
     const auto safe_prefix =
         utf8::prefix_by_bytes(std::string_view(msg_ref.content), msgsize);
     return std::format("{}{}{}\n{}", TAG_OPEN, safe_prefix, TAG_CLOSE, dbtools);
