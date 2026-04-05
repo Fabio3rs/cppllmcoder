@@ -23,4 +23,4 @@ struct RuntimeDefaults {
 RuntimeDefaults
 buildDefaultRuntime(const app::Options &opts,
                     const std::string &log_path = ".cppllmcoder/agent.log",
-                    bool echo_stdout = true, size_t max_read_bytes = 8192);
+                    bool echo_stdout = true, size_t max_read_bytes = 32 * 1024);

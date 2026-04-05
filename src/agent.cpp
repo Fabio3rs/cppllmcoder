@@ -7,6 +7,7 @@
 #include "json_utils.hpp"
 #include "llm_chat_streamer.hpp"
 #include "time_utils.hpp"
+#include "utils/simple_utf8view.hpp"
 #include "uuid_utils.hpp"
 #include <cctype>
 #include <cstddef>
@@ -418,7 +419,7 @@ std::string Agent::prune_message(const Message &msg_ref) const {
         return msg_ref.content;
     }
 
-    std::string_view view_content = msg_ref.content;
+    utf8::string_view_utf8 view_content(std::string_view(msg_ref.content));
 
     std::string_view TAG_OPEN = "<truncated>";
     std::string_view TAG_CLOSE = "</truncated>";

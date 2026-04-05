@@ -1,4 +1,5 @@
 #pragma once
+#include "utils/Strutils.hpp"
 #include <string>
 #include <string_view>
 
@@ -34,8 +35,8 @@ struct AgentAction {
             }
 
             action.thought.assign(thought_view);
-            action.lua_code.assign(code_inner);
-            action.has_code = true;
+            action.lua_code.assign(Strutils::trim(code_inner));
+            action.has_code = action.lua_code.size() > 0;
         } else {
             action.thought = std::string(raw);
         }

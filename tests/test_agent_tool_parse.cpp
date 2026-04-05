@@ -14,8 +14,8 @@ TEST(AgentActionParse, ExtractsCodeBetweenTags) {
 
     EXPECT_TRUE(action.has_code);
     EXPECT_EQ(action.thought, "Lorem ipsum...\n\n");
-    EXPECT_EQ(action.lua_code, "\n    local result = fs.ls(\".\")\n"
-                               "    return result[1]\n");
+    EXPECT_EQ(action.lua_code, "local result = fs.ls(\".\")\n"
+                               "    return result[1]");
 }
 
 TEST(AgentActionParse, HandlesPlainTextWhenNoTags) {
@@ -38,5 +38,5 @@ print("hello")
 
     EXPECT_TRUE(action.has_code);
     EXPECT_EQ(action.thought, "");
-    EXPECT_EQ(action.lua_code, "\nprint(\"hello\")\n");
+    EXPECT_EQ(action.lua_code, "print(\"hello\")");
 }
