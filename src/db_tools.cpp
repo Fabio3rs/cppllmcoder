@@ -50,7 +50,7 @@ class DbHeadTool final : public ITool {
                  {"bytes_to_read", "Max UTF-8 bytes to read", "int", false}},
             .usage_example =
                 "tools.db.head('messages', 42, 'content', 0, 1024)",
-            .returns = "table {data, bytes_read, eof}",
+            .returns = "table {data, bytes_read, next_offset, eof}",
             .tags = {"db", "read", "sqlite", "memory"},
             .danger_tags = {},
             .is_sensitive = false,
@@ -127,11 +127,13 @@ class DbHeadTool final : public ITool {
                 utf8::align_offset(content, start_offset + 1);
             chunk = content.substr(start_offset, next_offset - start_offset);
         }
+        const std::size_t next_offset = start_offset + chunk.size();
         const bool eof = (start_offset + chunk.size()) >= content.size();
 
         sol::table out = lua.create_table();
         out["data"] = std::string(chunk);
         out["bytes_read"] = chunk.size();
+        out["next_offset"] = next_offset;
         out["eof"] = eof;
         return sol::make_object(lua, out);
     }

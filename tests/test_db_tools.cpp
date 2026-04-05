@@ -58,6 +58,7 @@ TEST(DbHeadTool, ReadsSliceWithinLimit) {
 
     EXPECT_EQ(j["data"], "hel");
     EXPECT_EQ(j["bytes_read"], 3);
+    EXPECT_EQ(j["next_offset"], 3);
     EXPECT_FALSE(j["eof"].get<bool>());
 }
 
@@ -76,6 +77,7 @@ TEST(DbHeadTool, CapsRequestedBytesToMaxRead) {
 
     EXPECT_EQ(j["data"], "abcd");
     EXPECT_EQ(j["bytes_read"], 4);
+    EXPECT_EQ(j["next_offset"], 4);
 }
 
 TEST(DbHeadTool, MarksEofAtEndOfContent) {
@@ -93,6 +95,7 @@ TEST(DbHeadTool, MarksEofAtEndOfContent) {
 
     EXPECT_EQ(j["data"], "ef");
     EXPECT_EQ(j["bytes_read"], 2);
+    EXPECT_EQ(j["next_offset"], 6);
     EXPECT_TRUE(j["eof"].get<bool>());
 }
 
@@ -139,6 +142,7 @@ TEST(DbHeadTool, PreservesUtf8BoundariesWithinBudget) {
     EXPECT_EQ(j["data"], "a"
                          "\xC3\xA9");
     EXPECT_EQ(j["bytes_read"], 3);
+    EXPECT_EQ(j["next_offset"], 3);
     EXPECT_FALSE(j["eof"].get<bool>());
 }
 
@@ -161,6 +165,7 @@ TEST(DbHeadTool, RealignsOffsetInsideUtf8Sequence) {
     EXPECT_EQ(j["data"], "\xF0\x9F\x98\x80"
                          "b");
     EXPECT_EQ(j["bytes_read"], 5);
+    EXPECT_EQ(j["next_offset"], 8);
     EXPECT_TRUE(j["eof"].get<bool>());
 }
 
@@ -182,5 +187,36 @@ TEST(DbHeadTool, ReturnsWholeGraphemeWhenBudgetCannotFitFirstOne) {
     EXPECT_EQ(j["data"], "e"
                          "\xCC\x81");
     EXPECT_EQ(j["bytes_read"], 3);
+    EXPECT_EQ(j["next_offset"], 3);
     EXPECT_FALSE(j["eof"].get<bool>());
+}
+
+TEST(DbHeadTool, NextOffsetAllowsSequentialReadsAfterRealignment) {
+    DbFixture fx;
+    const auto row_id = fx.insert("a"
+                                  "\xC3\xA9"
+                                  "\xF0\x9F\x98\x80"
+                                  "b");
+
+    auto reg = std::make_shared<DefaultToolRegistry>();
+    registerBrainDbTools(*reg, fx.db.get(), /*max_read_bytes=*/8);
+    LuaContext lua;
+    lua.bindTools(*reg);
+
+    const auto first = exec_json(
+        lua,
+        std::format("return tools.db.head('messages', {}, 'content', 2, 8)",
+                    row_id));
+    ASSERT_EQ(first["data"], "\xF0\x9F\x98\x80"
+                             "b");
+    ASSERT_EQ(first["next_offset"], 8);
+
+    const auto second = exec_json(
+        lua,
+        std::format("return tools.db.head('messages', {}, 'content', {}, 8)",
+                    row_id, first["next_offset"].get<int>()));
+    EXPECT_EQ(second["data"], "");
+    EXPECT_EQ(second["bytes_read"], 0);
+    EXPECT_EQ(second["next_offset"], 8);
+    EXPECT_TRUE(second["eof"].get<bool>());
 }
