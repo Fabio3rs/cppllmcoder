@@ -175,10 +175,14 @@ class ScopedTimer {
         std::function<void(std::chrono::milliseconds)> on_finish)
         : on_finish_(std::move(on_finish)), start_(now_steady()) {}
 
-    ~ScopedTimer() {
-        if (on_finish_) {
-            const auto end = now_steady();
-            on_finish_(elapsed_ms(start_, end));
+    ~ScopedTimer() noexcept {
+        try {
+            if (on_finish_) {
+                const auto end = now_steady();
+                on_finish_(elapsed_ms(start_, end));
+            }
+        } catch (...) {
+            // NOLINT
         }
     }
 

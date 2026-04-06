@@ -31,10 +31,10 @@ set(SOL2_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 
 set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
 
-add_subdirectory(vendor/sol2)
-add_subdirectory(vendor/openai-cpp)
-add_subdirectory(vendor/FTXUI)
-add_subdirectory(vendor/utf8proc)
+add_subdirectory(vendor/sol2 SYSTEM)
+add_subdirectory(vendor/openai-cpp SYSTEM)
+add_subdirectory(vendor/FTXUI SYSTEM)
+add_subdirectory(vendor/utf8proc SYSTEM)
 include("vendor/cmake/build_sqlite-vec.cmake")
 
 if (${CMAKE_CXX_COMPILER_ID} STREQUAL "GNU")
