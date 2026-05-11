@@ -837,6 +837,28 @@ int runCockpitUi(CockpitAppDeps deps) {
                                          " for agent " + retry.agent_id);
                             updated_logs = true;
                         },
+                        [&](const EvSubAgentFeedback &feedback) {
+                            cockpit.current_action =
+                                "Sub-agent feedback from " + feedback.agent_id;
+                            ChatItem item{};
+                            item.role = ChatRole::Assistant;
+                            item.agent_id = feedback.agent_id;
+                            item.title = feedback.parent_id.empty()
+                                             ? "[subagent]"
+                                             : "[subagent -> parent]";
+                            item.text = feedback.text;
+                            item.collapsible = true;
+                            item.expanded = false;
+                            item.preview_len = 240;
+                            cockpit.conversation.push_back(std::move(item));
+                            push_log(
+                                LogKind::Agent,
+                                "Sub-agent feedback from " + feedback.agent_id +
+                                    (feedback.parent_id.empty()
+                                         ? ""
+                                         : " to parent " + feedback.parent_id));
+                            updated_logs = true;
+                        },
                         [&](const EvAgentFinished &fin) {
                             cockpit.current_action =
                                 "Agent finished: " + fin.agent_id;

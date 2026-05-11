@@ -104,6 +104,14 @@ Agent::Agent(const app::Options &opts, std::shared_ptr<ToolRegistry> tools,
             ToolInvocationContext ctx{meta, std::move(preview), 0,
                                       std::chrono::milliseconds{0},
                                       session_info};
+            if (brain_store && prompt_manager) {
+                const auto prompt_text =
+                    prompt_manager->buildToolDecisionPrompt(ctx);
+                brain_store->insertPromptLog(
+                    "", session_info.id, "tool_decision", session_info.model,
+                    session_info.model_version, prompt_text, "", 0, 0,
+                    std::chrono::milliseconds{0});
+            }
             const auto consent_start = std::chrono::steady_clock::now();
             auto decision = evaluate_tool_consent(ctx);
             const auto consent_end = std::chrono::steady_clock::now();
@@ -189,6 +197,12 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
         auto tools = tool_registry->topKDocs("", 16);
 
         auto system_prompt = prompt_manager->buildSystemPrompt(*this);
+        if (brain_store) {
+            brain_store->insertPromptLog(
+                "", session_info.id, "system", session_info.model,
+                session_info.model_version, system_prompt, "", 0, 0,
+                std::chrono::milliseconds{0});
+        }
 
         Message system_msg{.id = 0,
                            .role = MessageRole::System,
@@ -289,6 +303,12 @@ std::string Agent::run_step(std::string_view input, IAgentDriver &driver,
             .token_count = static_cast<unsigned int>(
                 usage.total_tokens >= 0 ? usage.total_tokens : 0)};
         add_to_history(assistant_msg);
+        if (brain_store) {
+            brain_store->insertPromptLog(
+                "", session_info.id, "assistant", session_info.model,
+                session_info.model_version, "", reply, 0,
+                usage.total_tokens >= 0 ? usage.total_tokens : 0, duration);
+        }
 
         if (stats_recorder && usage.total_tokens >= 0) {
             stats_recorder->incrementTokenCount(usage.total_tokens);

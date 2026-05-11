@@ -49,6 +49,6 @@ std::optional<std::chrono::milliseconds> CockpitAgentDriver::timeout() const {
     return std::nullopt; // Interativo: sem timeout
 }
 
-bool CockpitAgentDriver::should_finish(int /*idle_turns*/) const {
-    return false; // Interativo: deixa o operador decidir
+bool CockpitAgentDriver::should_finish(int idle_turns) const {
+    return idle_turns > 0;
 }
