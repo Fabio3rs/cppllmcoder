@@ -19,6 +19,10 @@ class MockOpenAIServer {
         std::function<void(const Json &, httplib::Response &)>;
     using EmbeddingHandler = std::function<Json(const Json &)>;
     using ModelListHandler = std::function<Json()>;
+    // Handler that can set any HTTP status + headers (used for error/retry
+    // tests)
+    using RawChatHandler =
+        std::function<void(const Json &, httplib::Response &)>;
 
     explicit MockOpenAIServer(std::string host = "127.0.0.1");
     ~MockOpenAIServer();
@@ -37,6 +41,9 @@ class MockOpenAIServer {
     void setChatStreamHandler(ChatStreamHandler handler);
     void setEmbeddingHandler(EmbeddingHandler handler);
     void setModelListHandler(ModelListHandler handler);
+    // Override ALL /v1/chat/completions traffic (stream or not) with a raw
+    // handler; takes priority over setChatHandler / setChatStreamHandler.
+    void setRawChatHandler(RawChatHandler handler);
 
   private:
     void installRoutes();
@@ -51,6 +58,7 @@ class MockOpenAIServer {
 
     ChatHandler chat_handler_{};
     ChatStreamHandler chat_stream_handler_{};
+    RawChatHandler raw_chat_handler_{};
     EmbeddingHandler embedding_handler_{};
     ModelListHandler model_list_handler_{};
 };

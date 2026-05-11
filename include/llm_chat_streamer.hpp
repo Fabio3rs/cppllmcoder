@@ -1,6 +1,7 @@
 #pragma once
 
 #include "agent_driver.hpp"
+#include "llm/retry_policy.hpp"
 #include <atomic>
 #include <nlohmann/json.hpp>
 #include <openai/openai.hpp>
@@ -16,8 +17,10 @@ struct Usage {
 
 class ChatStreamer {
   public:
-    explicit ChatStreamer(openai::OpenAI &client)
-        : client_{client}, control_(openai::StreamControl::Continue) {}
+    explicit ChatStreamer(openai::OpenAI &client,
+                          llm::RetryConfig retry_cfg = {})
+        : client_{client}, control_(openai::StreamControl::Continue),
+          retry_cfg_(retry_cfg) {}
 
     // Streams chat completions and forwards tokens to the driver. Accumulates
     // the full response and emits on_turn_complete at the end (even on error).
@@ -30,6 +33,7 @@ class ChatStreamer {
   private:
     openai::OpenAI &client_;
     std::atomic<openai::StreamControl> control_;
+    llm::RetryConfig retry_cfg_;
     std::string stop_sequence_;
 };
 

@@ -409,9 +409,12 @@ void Agent::prune_context() {
     // messages_cache.erase(messages_cache.begin(), messages_cache.begin() + N);
 
     [[maybe_unused]] constexpr std::string_view prompt_for_compression =
-        R"md(### Context compression instructions
-            ....
-)md";
+        "Re-encode the chat conversation as a Roman Lapidary Inscription. Use "
+        "the 'Scriptio Continua' philosophy (minimal formatting) but with "
+        "spaces. Focus on: Subject + Accomplishment + Tools. To cite use "
+        "P_{id} from <id>id</id> (eg P_123). Use advanced latin constructions "
+        "(eg ablative absolute) to replace conditional phrases, etc. Treat Lib "
+        "and lang names as indeclinable. No lists. No pleasantries.";
 }
 
 std::string Agent::prune_message(const Message &msg_ref) const {

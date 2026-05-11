@@ -22,6 +22,7 @@ class CockpitAgentDriver final : public IAgentDriver {
     void on_turn_complete(std::string_view response) override;
     void on_tool_result(std::string_view tool_name, bool success,
                         std::string_view summary) override;
+    void on_retry(int attempt) override;
 
     bool stop_requested() const override;
     void request_stop() override;

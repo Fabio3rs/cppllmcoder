@@ -78,12 +78,21 @@ void MockOpenAIServer::setModelListHandler(ModelListHandler handler) {
     model_list_handler_ = std::move(handler);
 }
 
+void MockOpenAIServer::setRawChatHandler(RawChatHandler handler) {
+    raw_chat_handler_ = std::move(handler);
+}
+
 void MockOpenAIServer::installRoutes() {
     server_.Post(
         "/v1/chat/completions", [this](const Request &req, Response &res) {
             auto body = nlohmann::json::parse(req.body, nullptr, false);
             if (body.is_discarded()) {
                 set_json_response(res, {{"error", "invalid json"}}, 400);
+                return;
+            }
+            // Raw handler takes priority (used for error/retry tests).
+            if (raw_chat_handler_) {
+                raw_chat_handler_(body, res);
                 return;
             }
             const bool wants_stream = body.contains("stream") &&

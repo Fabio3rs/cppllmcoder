@@ -73,8 +73,13 @@ struct EvAgentError {
     std::string error;
 };
 
+struct EvRetry {
+    std::string agent_id;
+    int attempt = 0;
+};
+
 using AgentEvent = std::variant<EvToken, EvTurnComplete, EvToolCall,
-                                EvAgentFinished, EvAgentError>;
+                                EvAgentFinished, EvAgentError, EvRetry>;
 
 enum class AgentState { Running, Finished, Errored };
 
@@ -144,6 +149,20 @@ class IAgentDriver {
 
     // Resposta completa de um turno (após acumular todos os chunks)
     virtual void on_turn_complete(std::string_view response) = 0;
+
+    // Chamado pelo ChatStreamer *antes* de cada nova tentativa após falha.
+    // `attempt` é o índice 0-based da tentativa *que está prestes a começar*
+    // (portanto 1 na primeira retry, 2 na segunda, …).
+    //
+    // Contrato importante: tokens parciais de tentativas anteriores podem ter
+    // sido entregues via on_token() antes que o erro fosse detectado
+    // (tipicamente em falhas de rede mid-stream). O driver é responsável por
+    // descartar/sobrescrever esse conteúdo parcial se necessário.
+    // Drivers simples (CLI, log) podem ignorar; drivers TUI devem limpar o
+    // buffer de streaming do turno atual.
+    //
+    // Implementação padrão: no-op (não quebra implementações existentes).
+    virtual void on_retry(int /*attempt*/) {}
 
     // Resultado de uma tool call (para telemetria/TUI)
     virtual void on_tool_result(std::string_view tool_name, bool success,

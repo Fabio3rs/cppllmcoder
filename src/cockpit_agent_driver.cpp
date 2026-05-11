@@ -19,6 +19,10 @@ void CockpitAgentDriver::on_tool_result(std::string_view tool_name,
         agent_id_, std::string(tool_name), {}, success, std::string(summary)});
 }
 
+void CockpitAgentDriver::on_retry(int attempt) {
+    bus_->post(EvRetry{agent_id_, attempt});
+}
+
 bool CockpitAgentDriver::stop_requested() const {
     return stop_.load(std::memory_order_relaxed);
 }
